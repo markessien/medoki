@@ -6,8 +6,10 @@
 // tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediciapp/main.dart';
+import 'package:mediciapp/providers/year_service_provider.dart'; // Import the provider
 import 'package:mediciapp/services/year_service.dart'; // Import YearService
 
 void main() {
@@ -18,8 +20,13 @@ void main() {
     // Using await YearService.create() ensures it's properly initialized.
     final yearService = await YearService.create();
 
-    // Build our app and trigger a frame, providing the required yearService.
-    await tester.pumpWidget(MyApp(yearService: yearService));
+    // Build our app within a ProviderScope, overriding the yearServiceProvider.
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [yearServiceProvider.overrideWithValue(yearService)],
+        child: const MyApp(), // MyApp no longer takes yearService
+      ),
+    );
 
     // Allow time for async operations like YearService.create() and initial build.
     await tester.pumpAndSettle();

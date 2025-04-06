@@ -1,26 +1,36 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
+import 'package:open_file/open_file.dart'; // Import open_file package
 import 'package:path/path.dart' as p; // Use prefix to avoid conflicts
+import 'package:path_provider/path_provider.dart'; // Needed for documents directory
+import '../providers/selected_file_provider.dart'; // Import the provider
 // file_picker import is needed if _addRecord logic were here, but it's moved
 // import 'package:file_picker/file_picker.dart';
 
-class YearRecordsGrid extends StatefulWidget {
+// Change to ConsumerStatefulWidget
+class YearRecordsGrid extends ConsumerStatefulWidget {
   final String yearName;
   final String? basePath; // Base path from settings
   final VoidCallback? onAddRecord; // Callback for FAB press
+  final Function(String filePath)? onFileSelected; // Callback for file tap
+  // final String? selectedFilePath; // Removed - use provider
 
   const YearRecordsGrid({
     super.key,
     required this.yearName,
     required this.basePath,
     this.onAddRecord, // Add to constructor
+    this.onFileSelected, // Add to constructor
   });
 
   @override
-  State<YearRecordsGrid> createState() => _YearRecordsGridState();
+  // Change to ConsumerState
+  ConsumerState<YearRecordsGrid> createState() => _YearRecordsGridState();
 }
 
-class _YearRecordsGridState extends State<YearRecordsGrid> {
+// Change to ConsumerState
+class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
   List<FileSystemEntity> _items = [];
   bool _isLoading = true;
   String? _error;
@@ -149,39 +159,73 @@ class _YearRecordsGridState extends State<YearRecordsGrid> {
           final item = _items[index];
           final isDirectory = item is Directory;
           final name = p.basename(item.path);
+          final path = item.path; // Store path for menu actions
 
-          return Card(
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: () {
-                // TODO: Handle tap
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text('Tapped on: $name')));
-              },
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    isDirectory ? Icons.folder : Icons.insert_drive_file,
-                    size: 48.0,
-                    color: Theme.of(context).colorScheme.primary,
+          // Use GestureDetector to detect right-clicks (onSecondaryTapUp)
+          return GestureDetector(
+            onSecondaryTapUp: (details) {
+              // Show context menu only for files, not directories (for now)
+              if (!isDirectory) {
+                _showContextMenu(context, details.globalPosition, path, name);
+              }
+            },
+            child: Container(
+              // Wrap Card with Container for border
+              decoration: BoxDecoration(
+                border: Border.all(
+                  // Use provider state for color condition
+                  color:
+                      ref.watch(selectedFileProvider).path == path
+                          ? Colors
+                              .blue // Blue border if selected
+                          : Colors.transparent, // No border if not selected
+                  width: 2.0, // Border width
+                ),
+                borderRadius: BorderRadius.circular(
+                  4.0,
+                ), // Match Card's default radius (approx)
+              ),
+              child: Card(
+                clipBehavior: Clip.antiAlias,
+                // Remove Card's default margin if Container adds too much space
+                // margin: EdgeInsets.zero,
+                child: InkWell(
+                  onTap: () {
+                    if (!isDirectory) {
+                      // Call the callback only for files
+                      widget.onFileSelected?.call(path);
+                    } else {
+                      // Optional: Handle directory tap differently if needed
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Tapped on folder: $name')),
+                      );
+                    }
+                  },
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        isDirectory ? Icons.folder : Icons.insert_drive_file,
+                        size: 48.0,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(height: 8.0),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                        child: Text(
+                          name,
+                          textAlign: TextAlign.center,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                          style: const TextStyle(fontSize: 12.0),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8.0),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    child: Text(
-                      name,
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 2,
-                      style: const TextStyle(fontSize: 12.0),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-          );
+          ); // Close Container
         },
       );
     }
@@ -199,5 +243,159 @@ class _YearRecordsGridState extends State<YearRecordsGrid> {
                 child: const Icon(Icons.add),
               ),
     );
+  }
+
+  // Method to show the context menu
+  void _showContextMenu(
+    BuildContext context,
+    Offset position,
+    String filePath,
+    String fileName,
+  ) {
+    final RenderBox overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & const Size(40, 40), // Small rectangle at tap position
+        Offset.zero & overlay.size, // Overlay boundaries
+      ),
+      items: <PopupMenuEntry<String>>[
+        const PopupMenuItem<String>(
+          value: 'open',
+          child: ListTile(
+            leading: Icon(Icons.open_in_new),
+            title: Text('Open'),
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'open_external',
+          child: ListTile(
+            leading: Icon(Icons.open_in_browser), // Example icon
+            title: Text('Open with External App...'),
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'properties',
+          child: ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('Properties'),
+          ),
+        ),
+        const PopupMenuDivider(), // Separator
+        const PopupMenuItem<String>(
+          value: 'delete',
+          child: ListTile(
+            leading: Icon(Icons.delete_outline, color: Colors.red),
+            title: Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ),
+      ],
+      elevation: 8.0,
+    ).then<void>((String? selectedValue) async {
+      // Make async for file operations
+      if (selectedValue == null) return; // User dismissed the menu
+
+      // --- Actions ---
+      String actionMessage = '';
+      try {
+        switch (selectedValue) {
+          case 'open':
+            // Call the same callback used for direct taps to select the file
+            widget.onFileSelected?.call(filePath);
+            // No snackbar message needed here as the selection itself is the feedback
+            actionMessage = ''; // Clear any potential default message
+            break;
+          case 'open_external':
+            final result = await OpenFile.open(filePath);
+            if (result.type == ResultType.done) {
+              actionMessage =
+                  'Opening "$fileName"...'; // Feedback that the attempt was made
+            } else {
+              // Handle specific errors if needed, or show a generic message
+              actionMessage = 'Could not open "$fileName": ${result.message}';
+            }
+            break;
+          case 'properties':
+            actionMessage = 'Placeholder: Show properties for $fileName';
+            // TODO: Implement properties view logic
+            break;
+          case 'delete':
+            // Show confirmation dialog before moving
+            final bool? confirmed = await showDialog<bool>(
+              context: context,
+              builder: (BuildContext context) {
+                return AlertDialog(
+                  title: const Text('Confirm Move to Trash'),
+                  content: Text(
+                    'Are you sure you want to move "$fileName" to the trash folder in your Documents?',
+                  ),
+                  actions: <Widget>[
+                    TextButton(
+                      child: const Text('Cancel'),
+                      onPressed: () {
+                        Navigator.of(context).pop(false); // Not confirmed
+                      },
+                    ),
+                    TextButton(
+                      child: const Text('Move to Trash'),
+                      onPressed: () {
+                        Navigator.of(context).pop(true); // Confirmed
+                      },
+                    ),
+                  ],
+                );
+              },
+            );
+
+            if (confirmed == true) {
+              // Ensure basePath is available
+              if (widget.basePath == null || widget.basePath!.isEmpty) {
+                throw Exception("Medical records base path is not set.");
+              }
+
+              // Create trash folder path within the base path
+              final trashDirPath = p.join(widget.basePath!, 'trash');
+              final trashDir = Directory(trashDirPath);
+
+              // Create trash folder if it doesn't exist
+              if (!await trashDir.exists()) {
+                await trashDir.create(recursive: true);
+              }
+
+              // Create destination path
+              final destinationPath = p.join(trashDirPath, fileName);
+
+              // Move the file
+              final fileToMove = File(filePath);
+              if (await fileToMove.exists()) {
+                await fileToMove.rename(destinationPath);
+                actionMessage = '"$fileName" moved to trash.';
+                _loadDirectoryContents(); // Refresh the grid
+              } else {
+                actionMessage = 'Error: File "$fileName" not found.';
+              }
+            } else {
+              actionMessage = 'Move cancelled.'; // User cancelled
+            }
+            break; // End of delete case
+        }
+        // Show feedback only if an action was attempted or cancelled
+        if (actionMessage.isNotEmpty && mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(actionMessage)));
+        }
+      } catch (e) {
+        // Handle errors during file operations or dialog display
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        }
+      }
+      // --- End Actions ---
+    });
   }
 }
