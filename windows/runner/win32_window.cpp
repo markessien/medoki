@@ -128,16 +128,33 @@ bool Win32Window::Create(const std::wstring& title,
   const wchar_t* window_class =
       WindowClassRegistrar::GetInstance()->GetWindowClass();
 
-  const POINT target_point = {static_cast<LONG>(origin.x),
-                              static_cast<LONG>(origin.y)};
-  HMONITOR monitor = MonitorFromPoint(target_point, MONITOR_DEFAULTTONEAREST);
-  UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
-  double scale_factor = dpi / 96.0;
+  // Get primary monitor's work area rectangle.
+  RECT work_area;
+  SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
+  int screen_width = work_area.right - work_area.left;
+  int screen_height = work_area.bottom - work_area.top;
+
+  // Get the DPI for the primary monitor.
+  HMONITOR primary_monitor = MonitorFromWindow(nullptr, MONITOR_DEFAULTTOPRIMARY);
+  UINT dpi = FlutterDesktopGetDpiForMonitor(primary_monitor);
+  double scale_factor = static_cast<double>(dpi) / 96.0;
+
+  // Calculate the scaled window size.
+  int window_width = static_cast<int>(size.width * scale_factor);
+  int window_height = static_cast<int>(size.height * scale_factor);
+
+  // Calculate the centered position.
+  int x = work_area.left + (screen_width - window_width) / 2;
+  int y = work_area.top + (screen_height - window_height) / 2;
+
+  // Ensure calculated position is non-negative, as CreateWindow can fail with negative coordinates
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
 
   HWND window = CreateWindow(
       window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      x, y, // Use calculated centered position.
+      window_width, window_height, // Use calculated scaled size.
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {

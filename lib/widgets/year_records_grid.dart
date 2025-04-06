@@ -1,12 +1,25 @@
 import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
 import 'package:open_file/open_file.dart'; // Import open_file package
 import 'package:path/path.dart' as p; // Use prefix to avoid conflicts
 import 'package:path_provider/path_provider.dart'; // Needed for documents directory
+import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
 import '../providers/selected_file_provider.dart'; // Import the provider
 // file_picker import is needed if _addRecord logic were here, but it's moved
 // import 'package:file_picker/file_picker.dart';
+
+// --- Provider for Medoki File Status ---
+// Family provider: Keyed by yearName, holds a Set of file paths that have a .medoki.md file
+final medokiStatusProvider = StateProvider.family<Set<String>, String>((
+  ref,
+  yearName,
+) {
+  // Initial state is an empty set, populated by _loadDirectoryContents
+  return <String>{};
+});
+// --- End Provider ---
 
 // Change to ConsumerStatefulWidget
 class YearRecordsGrid extends ConsumerStatefulWidget {
@@ -32,6 +45,7 @@ class YearRecordsGrid extends ConsumerStatefulWidget {
 // Change to ConsumerState
 class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
   List<FileSystemEntity> _items = [];
+  // Removed local state: Map<String, bool> _medokiFileStatus = {};
   bool _isLoading = true;
   String? _error;
 
@@ -86,6 +100,13 @@ class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
 
       if (await directory.exists()) {
         itemsList = await directory.list().toList();
+        // Filter out .medoki.md files
+        itemsList =
+            itemsList
+                .where(
+                  (item) => !item.path.toLowerCase().endsWith('.medoki.md'),
+                )
+                .toList();
         // Sort items: directories first, then files, alphabetically
         itemsList.sort((a, b) {
           bool aIsDir = a is Directory;
@@ -100,12 +121,26 @@ class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
       }
       // If directory doesn't exist, itemsList remains empty
 
+      // Check for corresponding .medoki.md files and update the provider
+      final Set<String> medokiFiles = {};
+      for (var item in itemsList) {
+        if (item is File) {
+          final medokiPath = '${item.path}.medoki.md';
+          if (await File(medokiPath).exists()) {
+            medokiFiles.add(item.path); // Add path if .medoki.md exists
+          }
+        }
+      }
+      // Update the provider state for this specific year
+      ref.read(medokiStatusProvider(widget.yearName).notifier).state =
+          medokiFiles;
+
       if (mounted) {
+        // Only update items, isLoading, and error locally
         setState(() {
-          _items =
-              itemsList; // Update items (will be empty if dir doesn't exist)
+          _items = itemsList;
           _isLoading = false;
-          _error = null; // Clear any previous error
+          _error = null;
         });
       }
     } catch (e) {
@@ -160,6 +195,11 @@ class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
           final isDirectory = item is Directory;
           final name = p.basename(item.path);
           final path = item.path; // Store path for menu actions
+          // Watch the provider for the current year's status
+          final medokiStatuses = ref.watch(
+            medokiStatusProvider(widget.yearName),
+          );
+          final hasMedokiFile = medokiStatuses.contains(path);
 
           // Use GestureDetector to detect right-clicks (onSecondaryTapUp)
           return GestureDetector(
@@ -201,31 +241,62 @@ class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
                       );
                     }
                   },
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  // Use Stack to overlay the icon
+                  child: Stack(
                     children: [
-                      Icon(
-                        isDirectory ? Icons.folder : Icons.insert_drive_file,
-                        size: 48.0,
-                        color: Theme.of(context).colorScheme.primary,
+                      // Original content (Icon and Text)
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            isDirectory
+                                ? Icons.folder
+                                : Icons.insert_drive_file,
+                            size: 48.0,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(height: 8.0),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4.0,
+                            ),
+                            child: Text(
+                              name,
+                              textAlign: TextAlign.center,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 2,
+                              style: const TextStyle(fontSize: 12.0),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 8.0),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                        child: Text(
-                          name,
-                          textAlign: TextAlign.center,
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 2,
-                          style: const TextStyle(fontSize: 12.0),
+                      // Status Icon Overlay (only for files)
+                      if (!isDirectory)
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: Icon(
+                            hasMedokiFile
+                                ? Icons
+                                    .check_circle // Checkmark if exists
+                                : Icons.help_outline, // Question mark if not
+                            size: 18.0,
+                            color:
+                                hasMedokiFile
+                                    ? Colors
+                                        .green
+                                        .shade600 // Green for checkmark
+                                    : Colors
+                                        .orange
+                                        .shade700, // Orange for question mark
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),
               ),
             ),
-          ); // Close Container
+          );
         },
       );
     }
@@ -265,15 +336,23 @@ class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
         const PopupMenuItem<String>(
           value: 'open',
           child: ListTile(
-            leading: Icon(Icons.open_in_new),
+            leading: Icon(Icons.open_in_browser),
             title: Text('Open'),
           ),
         ),
         const PopupMenuItem<String>(
           value: 'open_external',
           child: ListTile(
-            leading: Icon(Icons.open_in_browser), // Example icon
+            leading: Icon(Icons.open_in_new), // Example icon
             title: Text('Open with External App...'),
+          ),
+        ),
+        const PopupMenuItem<String>(
+          // Added new menu item
+          value: 'open_folder',
+          child: ListTile(
+            leading: Icon(Icons.folder_open),
+            title: Text('Open Containing Folder'),
           ),
         ),
         const PopupMenuItem<String>(
@@ -315,6 +394,16 @@ class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
             } else {
               // Handle specific errors if needed, or show a generic message
               actionMessage = 'Could not open "$fileName": ${result.message}';
+            }
+            break;
+          case 'open_folder': // Added case for the new action
+            final dirPath = p.dirname(filePath);
+            final dirUri = Uri.file(dirPath);
+            if (await canLaunchUrl(dirUri)) {
+              await launchUrl(dirUri);
+              actionMessage = 'Opening folder for "$fileName"...';
+            } else {
+              actionMessage = 'Could not open folder for "$fileName".';
             }
             break;
           case 'properties':

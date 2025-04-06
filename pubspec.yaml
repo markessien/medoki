@@ -41,6 +41,10 @@ dependencies:
   path: ^1.9.1
   open_file: ^3.5.10
   flutter_riverpod: ^2.6.1
+  google_generative_ai: ^0.4.6
+  flutter_secure_storage: ^9.2.4
+  dart_openai: ^5.1.0
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

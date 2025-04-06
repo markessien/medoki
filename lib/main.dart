@@ -9,6 +9,8 @@ import 'widgets/year_records_grid.dart'; // Import YearRecordsGrid
 import 'widgets/summary_sidebar.dart'; // Import the new sidebar widget
 import 'widgets/app_toolbar.dart'; // Import the new toolbar widget
 import 'widgets/year_tab_page.dart'; // Import the new tab page widget
+import 'widgets/analysis_tab_page.dart'; // Import the new analysis tab page widget
+import 'widgets/analysis_sidebar.dart'; // Import the new analysis sidebar widget
 import 'providers/selected_file_provider.dart'; // Import the selected file provider
 import 'providers/settings_provider.dart'; // Import the settings provider
 import 'providers/year_service_provider.dart'; // Import the year service provider
@@ -20,8 +22,7 @@ import 'package:path/path.dart' as p; // Import path package
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize settings service
-  await SettingsService().init();
+  // SettingsService initialization is now handled internally when needed.
   // Initialize year service
   final yearService = await YearService.create(); // Create instance
   runApp(
@@ -48,7 +49,7 @@ class MyApp extends StatelessWidget {
       home: const MyHomePage(
         // Can be const now
         title:
-            'Medoki - Analyse Medical Documents with AI', // Changed AppBar Title
+            'Medoki - Analyse Your Medical Documents with AI', // Changed AppBar Title
         // yearService removed
       ),
     );
@@ -113,9 +114,10 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
 
   // Method to handle adding a new record
   Future<void> _addRecordForYear(String yearName) async {
-    // 1. Read the current base path from the provider
-    // Use read() as we are inside a button callback, not build()
-    final currentBasePath = ref.read(basePathProvider).value;
+    // 1. Read the current settings state from the provider
+    final settingsState = ref.read(settingsProvider);
+    final currentBasePath =
+        settingsState.medicalFilesPath; // Get path from state
     final years = ref.read(yearsProvider); // Read current years list
 
     // Check if base path is available and not empty
@@ -214,7 +216,8 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
     showDialog<bool>(
       // Dialog likely just needs to signal success/failure now
       context: context,
-      builder: (context) => YearManagementDialog(yearService: yearService),
+      // Remove yearService parameter as the dialog now uses the provider
+      builder: (context) => const YearManagementDialog(),
     );
     // No .then() needed here as the provider handles state updates & UI rebuilds
   }
@@ -224,7 +227,9 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
     const double topPadding = 8.0; // Define padding amount
 
     // Watch providers
-    final basePathAsyncValue = ref.watch(basePathProvider);
+    final settingsState = ref.watch(
+      settingsProvider,
+    ); // Watch the new settings provider
     final years = ref.watch(yearsProvider); // Watch the years list
 
     // --- TabController Initialization/Update ---
@@ -287,12 +292,14 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
           ),
         ],
         bottom: PreferredSize(
-          // Adjust height to include padding
-          preferredSize: const Size.fromHeight(
-            kToolbarHeight +
-                kTextTabBarHeight +
-                1.0 +
-                topPadding, // Add padding to height
+          // Calculate height dynamically based on whether the toolbar is shown
+          preferredSize: Size.fromHeight(
+            (_currentIndex != _analysisTabIndex
+                    ? kToolbarHeight // Height of AppToolbar
+                    : 0) + // Add 0 height if toolbar is hidden
+                kTextTabBarHeight + // Height of TabBar
+                1.0 + // Divider (if any, or just padding)
+                topPadding, // Top padding
           ),
           // Wrap the bottom section content in a Material/Container to set its background
           child: Material(
@@ -365,58 +372,56 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
                     ),
                   ],
                 ),
-                // Use the extracted AppToolbar widget
-                AppToolbar(
-                  currentIndex: _currentIndex,
-                  analysisTabIndex: _analysisTabIndex,
-                  // selectedFilePath removed - AppToolbar gets it from provider
-                  onAddRecord: () {
-                    // Call add record for the currently selected year tab
-                    // Adjust index because years list doesn't include Analysis tab
-                    if (_currentIndex > 0 && _currentIndex <= years.length) {
-                      // Use years list from provider
-                      _addRecordForYear(years[_currentIndex - 1].name);
-                    }
-                  },
-                  // onClearSelection removed - AppToolbar calls provider directly
-                  // Pass other callbacks like onSearch, onFilter, onGenerateReport if needed
-                ),
+                // Conditionally display the AppToolbar using an if statement
+                if (_currentIndex != _analysisTabIndex)
+                  AppToolbar(
+                    currentIndex: _currentIndex,
+                    analysisTabIndex: _analysisTabIndex,
+                    // selectedFilePath removed - AppToolbar gets it from provider
+                    onAddRecord: () {
+                      // Call add record for the currently selected year tab
+                      // Adjust index because years list doesn't include Analysis tab
+                      if (_currentIndex > 0 && _currentIndex <= years.length) {
+                        // Use years list from provider
+                        _addRecordForYear(years[_currentIndex - 1].name);
+                      }
+                    },
+                    // onClearSelection removed - AppToolbar calls provider directly
+                    // Pass other callbacks like onSearch, onFilter, onGenerateReport if needed
+                  ),
               ],
             ),
           ),
         ),
       ),
-      // Use basePathAsyncValue.when for the main body
-      body: basePathAsyncValue.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, stack) => Center(child: Text('Error loading path: $err')),
-        data: (basePathData) {
-          // Build the TabBarView only when basePathData is available
+      // Use settingsState to handle loading/error for the main body
+      body: Builder(
+        // Use Builder to access settingsState easily
+        builder: (context) {
+          if (settingsState.isLoading) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (settingsState.error != null) {
+            return Center(
+              child: Text('Error loading settings: ${settingsState.error}'),
+            );
+          }
+          // Get path from loaded state
+          final basePathData = settingsState.medicalFilesPath;
+
+          // Build the TabBarView only when settings are loaded
           return TabBarView(
             controller:
                 _tabController!, // Use ! as it's guaranteed initialized here
             children: [
-              // Analysis tab content view (unchanged)
-              const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Medical Analysis',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: 20),
-                    Text('This is the Analysis tab content'),
-                    SizedBox(height: 20),
-                    ElevatedButton(
-                      onPressed: null, // Placeholder action
-                      child: Text('Generate Analysis'),
-                    ),
-                  ],
-                ),
+              // Analysis tab content view (Now uses Row with AnalysisTabPage and AnalysisSidebar)
+              const Row(
+                children: [
+                  Expanded(
+                    child: AnalysisTabPage(), // Main content area
+                  ),
+                  AnalysisSidebar(), // Sidebar
+                ],
               ),
               // Dynamic year tabs
               ...years.map((year) {

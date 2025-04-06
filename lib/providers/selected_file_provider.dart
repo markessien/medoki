@@ -7,15 +7,39 @@ class SelectedFileState {
   final String? path;
   final String? name;
   final int? size;
+  final String? aiSummaryContent;
+  final String? extractionError;
+  final bool isExtracting; // Flag for loading state
 
-  const SelectedFileState({this.path, this.name, this.size});
+  const SelectedFileState({
+    this.path,
+    this.name,
+    this.size,
+    this.aiSummaryContent,
+    this.extractionError,
+    this.isExtracting = false, // Default to false
+  });
 
-  // Optional: Add copyWith for easier state updates if needed later
-  SelectedFileState copyWith({String? path, String? name, int? size}) {
+  // Optional: Add copyWith for easier state updates
+  SelectedFileState copyWith({
+    String? path,
+    String? name,
+    int? size,
+    String? aiSummaryContent,
+    String? extractionError,
+    bool clearError = false,
+    bool? isExtracting, // Add isExtracting parameter
+  }) {
     return SelectedFileState(
       path: path ?? this.path,
       name: name ?? this.name,
       size: size ?? this.size,
+      aiSummaryContent: aiSummaryContent ?? this.aiSummaryContent,
+      // Handle error clearing/updating
+      extractionError:
+          clearError ? null : extractionError ?? this.extractionError,
+      // Update isExtracting flag
+      isExtracting: isExtracting ?? this.isExtracting,
     );
   }
 }
@@ -30,10 +54,29 @@ class SelectedFileNotifier extends StateNotifier<SelectedFileState> {
       final file = File(filePath);
       if (await file.exists()) {
         final fileStat = await file.stat();
+        final fileName = p.basename(filePath);
+        final medokiFilePath = '$filePath.medoki.md'; // Construct path
+        String? summaryContent;
+
+        try {
+          final medokiFile = File(medokiFilePath);
+          if (await medokiFile.exists()) {
+            summaryContent = await medokiFile.readAsString();
+          }
+        } catch (e) {
+          print("Error reading medoki file $medokiFilePath: $e");
+          // Keep summaryContent as null
+        }
+
+        // Update state, ensuring error is cleared on successful selection/read
+        // Update state, ensuring error and extracting flag are cleared
         state = SelectedFileState(
           path: filePath,
-          name: p.basename(filePath),
+          name: fileName,
           size: fileStat.size,
+          aiSummaryContent: summaryContent,
+          extractionError: null,
+          isExtracting: false, // Ensure false on successful selection
         );
       } else {
         // File doesn't exist, clear state
@@ -50,6 +93,24 @@ class SelectedFileNotifier extends StateNotifier<SelectedFileState> {
 
   void clearSelection() {
     state = const SelectedFileState(); // Reset to initial empty state
+  }
+
+  // Method to specifically set an error state after an extraction attempt fails
+  void setExtractionError(String error) {
+    // Keep existing file info (path, name, size) but set the error
+    // and clear any potentially stale summary content
+    state = state.copyWith(
+      aiSummaryContent: null,
+      extractionError: error,
+      isExtracting: false, // Ensure false when error is set
+      clearError: false,
+    );
+  }
+
+  // Method to set the extracting state
+  void setExtracting(bool extracting) {
+    // Clear error when starting extraction
+    state = state.copyWith(isExtracting: extracting, clearError: true);
   }
 }
 
