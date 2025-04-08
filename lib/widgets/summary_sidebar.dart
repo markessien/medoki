@@ -1,9 +1,15 @@
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:path/path.dart'
-    as p; // Keep path import if needed, though basename is used in main
-import 'document_chat_widget.dart'; // Import the chat widget
+import 'dart:convert'; // For jsonDecode
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
+import 'package:path/path.dart' as p;
+import 'package:intl/intl.dart'; // Import date formatting
+import '../providers/selected_file_provider.dart'; // Import the provider
+import '../providers/file_extraction_provider.dart'; // Import the new provider
+import '../services/ai_service.dart';
+import 'document_chat_widget.dart';
 
 // Helper function to format bytes (moved from main.dart)
 String formatBytes(int bytes, [int decimals = 2]) {
@@ -13,31 +19,62 @@ String formatBytes(int bytes, [int decimals = 2]) {
   return '${(bytes / pow(1024, i)).toStringAsFixed(decimals)} ${suffixes[i]}';
 }
 
-class SummarySidebar extends StatelessWidget {
+// Provider to read and parse the .medoki.md file content
+final medokiFileContentProvider =
+    FutureProvider.family<Map<String, dynamic>?, String>((ref, filePath) async {
+      final medokiFilePath = '$filePath.medoki.md';
+      final file = File(medokiFilePath);
+
+      if (await file.exists()) {
+        try {
+          final content = await file.readAsString();
+          final data = jsonDecode(content) as Map<String, dynamic>;
+          return data; // Return the whole map (transcription + summary)
+        } catch (e) {
+          print("Error reading/parsing $medokiFilePath: $e");
+          throw Exception(
+            'Error reading analysis file: $e',
+          ); // Throw for error state
+        }
+      }
+      return null; // Return null if file doesn't exist
+    });
+
+// Convert to ConsumerStatefulWidget
+class SummarySidebar extends ConsumerStatefulWidget {
   final String? selectedFilePath;
   final String? selectedFileName;
   final int? selectedFileSize;
-  final String? aiSummaryContent;
-  final String? extractionError;
-  final bool isExtracting; // Add extracting flag
-  final VoidCallback? onExtractDataPressed;
+  // Remove parameters managed internally or by provider:
+  // final String? aiSummaryContent;
+  // final String? extractionError;
+  // final bool isExtracting;
+  // final VoidCallback? onExtractDataPressed;
 
   const SummarySidebar({
     super.key,
     required this.selectedFilePath,
     required this.selectedFileName,
     required this.selectedFileSize,
-    this.aiSummaryContent,
-    this.extractionError,
-    required this.isExtracting, // Make required or provide default
-    this.onExtractDataPressed,
+    // Remove parameters from constructor
   });
 
-  // Helper method to build the summary content area
-  Widget _buildSummaryContent(BuildContext context) {
-    // Priority: Extracting > Error > Content > Button
-    if (isExtracting) {
-      // Display loading indicator
+  @override
+  ConsumerState<SummarySidebar> createState() => _SummarySidebarState();
+}
+
+class _SummarySidebarState extends ConsumerState<SummarySidebar> {
+  // Local state and extraction method removed - now handled by fileExtractionProvider
+
+  // Helper method to build the summary content area using provider state
+  Widget _buildSummaryContent(
+    BuildContext context,
+    AsyncValue<Map<String, dynamic>?> medokiDataAsync,
+    FileExtractionState extractionState, // Get extraction state as parameter
+  ) {
+    // Priority: Extraction Loading > Extraction Error > Medoki Loading > Medoki Error > Medoki Content > Button
+    if (extractionState.isLoading) {
+      // Display loading indicator from extraction provider
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -48,334 +85,392 @@ class SummarySidebar extends StatelessWidget {
           ],
         ),
       );
-    } else if (extractionError != null && extractionError!.isNotEmpty) {
-      // Display the error message
+    } else if (extractionState.error != null) {
+      // Display the error message from extraction provider
       return SingleChildScrollView(
-        // Allow scrolling for long errors
-        child: Text(
-          extractionError!,
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.error,
-            fontSize: 13,
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Text(
+            extractionState.error!,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              fontSize: 13,
+            ),
           ),
         ),
-      );
-    } else if (aiSummaryContent != null && aiSummaryContent!.isNotEmpty) {
-      // Display the summary text
-      return TextField(
-        controller: TextEditingController(text: aiSummaryContent),
-        maxLines: null, // Allows multiple lines
-        // expands: true, // REMOVED: This caused the infinite height error in SingleChildScrollView
-        readOnly: true,
-        decoration: const InputDecoration(
-          border: InputBorder.none,
-          isDense: true, // Make it more compact if needed
-          contentPadding: EdgeInsets.zero, // Remove extra padding
-        ),
-        style: const TextStyle(fontSize: 13),
       );
     } else {
-      // Display the button
-      return Center(
-        // Center the button
-        child: ElevatedButton.icon(
-          icon: const Icon(Icons.biotech_outlined), // Example icon
-          label: const Text('Extract Data with AI'),
-          onPressed: onExtractDataPressed, // Use the callback
-          style: ElevatedButton.styleFrom(
-            // Optional: Add some styling
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          ),
+      // Use the medoki content provider's state
+      return medokiDataAsync.when(
+        loading:
+            () => const Center(
+              child: CircularProgressIndicator(),
+            ), // Loading medoki file
+        error: // Error loading medoki file
+            (err, stack) => SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Text(
+                  'Error loading summary: $err',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+        data: (medokiData) {
+          final summary = medokiData?['summary'] as String?;
+          if (summary != null && summary.isNotEmpty) {
+            // Display the summary text from medoki provider
+            return TextField(
+              controller: TextEditingController(text: summary),
+              maxLines: null,
+              readOnly: true,
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.all(8.0),
+              ),
+              style: const TextStyle(fontSize: 13),
+            );
+          } else {
+            // Display the button if no summary exists (and no extraction error/loading)
+            return Center(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.biotech_outlined),
+                label: const Text('Extract Data with AI'),
+                onPressed:
+                    () =>
+                        ref
+                            .read(
+                              fileExtractionProvider(
+                                widget.selectedFilePath,
+                              ).notifier,
+                            )
+                            .extractData(), // Call provider method
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                ),
+              ),
+            );
+          }
+        },
+      );
+    }
+  }
+
+  // Helper to format and display the date
+  Widget _buildDateDisplay(BuildContext context, String? dateString) {
+    if (dateString == null || dateString.isEmpty) {
+      return const Text(
+        'Date not available in document.',
+        style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
+      );
+    }
+    try {
+      // Attempt to parse the date string (assuming ISO 8601 format)
+      final dateTime = DateTime.parse(dateString).toLocal();
+      // Format the date nicely (e.g., "July 15, 2024")
+      final formattedDate = DateFormat.yMMMMd().format(dateTime);
+      return Text(formattedDate, style: const TextStyle(fontSize: 13));
+    } catch (e) {
+      // Handle cases where the date string is not in the expected format
+      print("Error parsing date string '$dateString': $e");
+      return Text(
+        'Invalid date format found: $dateString',
+        style: TextStyle(
+          fontSize: 13,
+          color: Theme.of(context).colorScheme.error,
         ),
       );
     }
   }
 
+  // _buildSidebarHeader method removed - header is now in AppToolbar
+
   @override
   Widget build(BuildContext context) {
-    // This is the logic moved from _buildSidebarContent in main.dart
-    if (selectedFilePath == null) {
-      return const Center(
-        child: Text(
-          'Select a file to see details.',
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
+    // Watch the medoki content provider
+    final medokiDataAsync =
+        widget.selectedFilePath != null
+            ? ref.watch(medokiFileContentProvider(widget.selectedFilePath!))
+            : const AsyncValue.data(null);
 
-    // Basic image extension check
-    final isImage = [
-      '.png',
-      '.jpg',
-      '.jpeg',
-      '.gif',
-      '.bmp',
-      '.webp',
-    ].any((ext) => selectedFilePath!.toLowerCase().endsWith(ext));
+    // Watch the extraction state provider for the current file
+    final extractionState = ref.watch(
+      fileExtractionProvider(widget.selectedFilePath),
+    );
 
-    // Use Stack for layering floating chat widget
-    return Stack(
+    // Build the main content structure using Column
+    return Column(
       children: [
-        // --- Main Scrollable Content ---
-        Positioned.fill(
-          // Fill all space except where chat widget is
-          bottom:
-              60, // Estimate chat widget height + padding (adjust as needed)
+        // --- Header removed from here ---
+
+        // --- Scrollable Content Area ---
+        Expanded(
+          // Make the content scrollable
           child: SingleChildScrollView(
             child: Padding(
-              // Add padding to scrollable area
-              padding: const EdgeInsets.only(
-                bottom: 8.0,
-              ), // Padding at the bottom of scroll
+              padding: const EdgeInsets.all(8.0), // Add padding around content
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // --- Top Section (Image/Placeholder, Details) ---
-                  if (isImage)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 200),
-                      child: Container(
-                        margin: EdgeInsets.zero,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(4.0),
-                          child: Center(
-                            child: Image.file(
-                              File(selectedFilePath!),
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.error_outline,
-                                        color: Colors.red,
-                                        size: 40,
+                // Only show content if a file is selected
+                children:
+                    widget.selectedFilePath == null
+                        ? [
+                          // Show 'Select a file' message if nothing is selected
+                          const Center(
+                            child: Padding(
+                              padding: EdgeInsets.only(top: 50.0),
+                              child: Text(
+                                'Select a file to see details.',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                        ]
+                        : [
+                          // --- Top Section (Image/Placeholder, Details) ---
+                          // Calculate isImage and build the top section only when filePath is not null
+                          Builder(
+                            builder: (context) {
+                              // Safe to use ! here because we are inside the non-null check block
+                              final isImage = [
+                                '.png',
+                                '.jpg',
+                                '.jpeg',
+                                '.gif',
+                                '.bmp',
+                                '.webp',
+                              ].any(
+                                (ext) => widget.selectedFilePath!
+                                    .toLowerCase()
+                                    .endsWith(ext),
+                              );
+
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (isImage)
+                                    ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                        maxHeight: 200,
                                       ),
-                                      SizedBox(height: 8),
-                                      Text('Could not load image preview.'),
-                                    ],
+                                      child: Container(
+                                        margin: EdgeInsets.zero,
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            4.0,
+                                          ),
+                                          child: Center(
+                                            child: Image.file(
+                                              File(widget.selectedFilePath!),
+                                              fit: BoxFit.contain,
+                                              errorBuilder: (
+                                                context,
+                                                error,
+                                                stackTrace,
+                                              ) {
+                                                return const Center(
+                                                  child: Column(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    children: [
+                                                      Icon(
+                                                        Icons.error_outline,
+                                                        color: Colors.red,
+                                                        size: 40,
+                                                      ),
+                                                      SizedBox(height: 8),
+                                                      Text(
+                                                        'Could not load image preview.',
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      height: 150,
+                                      margin: EdgeInsets.zero,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade200,
+                                        border: Border.all(
+                                          color: Colors.grey.shade300,
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          4.0,
+                                        ),
+                                      ),
+                                      child: const Center(
+                                        child: Icon(
+                                          Icons.insert_drive_file_outlined,
+                                          size: 50,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                    ),
+                                  const SizedBox(height: 8.0),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4.0,
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            widget.selectedFileName ??
+                                                'Unknown File',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.normal,
+                                              fontSize: 11,
+                                              height: 0.8,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
+                                          ),
+                                        ),
+                                        Text(
+                                          widget.selectedFileSize != null
+                                              ? formatBytes(
+                                                widget.selectedFileSize!,
+                                              )
+                                              : 'Unknown size',
+                                          style: TextStyle(
+                                            color: Colors.grey.shade700,
+                                            fontSize: 10,
+                                            height: 0.8,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                );
-                              },
-                            ),
+                                  const SizedBox(height: 8.0),
+                                  // --- End Top Section ---
+                                ],
+                              );
+                            },
                           ),
-                        ),
-                      ),
-                    )
-                  else
-                    Container(
-                      height: 150,
-                      margin: EdgeInsets.zero,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        border: Border.all(color: Colors.grey.shade300),
-                        borderRadius: BorderRadius.circular(4.0),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.insert_drive_file_outlined,
-                          size: 50,
-                          color: Colors.grey,
-                        ),
-                      ),
-                    ),
-                  const SizedBox(height: 8.0),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            selectedFileName ?? 'Unknown File',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.normal,
-                              fontSize: 11,
-                              height: 0.8,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                          ),
-                        ),
-                        Text(
-                          selectedFileSize != null
-                              ? formatBytes(selectedFileSize!)
-                              : 'Unknown size',
-                          style: TextStyle(
-                            color: Colors.grey.shade700,
-                            fontSize: 10,
-                            height: 0.8,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8.0),
-                  // --- End Top Section ---
 
-                  // --- AI Summary Section ---
-                  const Divider(height: 8.0),
-                  const Text(
-                    'AI Summary / Actions:',
-                    style: TextStyle(fontWeight: FontWeight.w500),
-                  ),
-                  const SizedBox(height: 8.0),
-                  // Use Container with height constraints for summary area
-                  // instead of Expanded inside Column inside SingleChildScrollView
-                  Container(
-                    constraints: const BoxConstraints(
-                      minHeight: 100,
-                    ), // Ensure minimum space
-                    child: _buildSummaryContent(context),
-                  ),
-                  // --- End AI Summary Section ---
-                ],
+                          // --- Test Date Section (Direct Display) ---
+                          // Only show if medoki data is loaded successfully
+                          if (medokiDataAsync.hasValue &&
+                              medokiDataAsync.value != null)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8.0,
+                                vertical: 4.0,
+                              ), // Add padding
+                              child: Row(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment
+                                        .baseline, // Align text baselines
+                                textBaseline:
+                                    TextBaseline
+                                        .alphabetic, // Specify the baseline type
+                                children: [
+                                  const Text(
+                                    'Test Date: ',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  Expanded(
+                                    // Allow date text to wrap if needed
+                                    child: _buildDateDisplay(
+                                      context,
+                                      medokiDataAsync.value?['testDateUTC']
+                                          as String?,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          // --- End Test Date Section ---
+
+                          // --- AI Summary Section ---
+                          const Divider(height: 8.0),
+                          // Use Container with height constraints for summary area
+                          Container(
+                            constraints: const BoxConstraints(minHeight: 100),
+                            child: _buildSummaryContent(
+                              context,
+                              medokiDataAsync,
+                              extractionState, // Pass extraction state
+                            ),
+                          ),
+                          // --- End AI Summary Section ---
+
+                          // --- Full Transcription Section (Collapsible) ---
+                          if (medokiDataAsync.hasValue &&
+                              medokiDataAsync.value != null)
+                            Theme(
+                              data: Theme.of(
+                                context,
+                              ).copyWith(dividerColor: Colors.transparent),
+                              child: ExpansionTile(
+                                tilePadding: const EdgeInsets.symmetric(
+                                  horizontal: 8.0,
+                                  vertical: 0,
+                                ),
+                                dense: true,
+                                title: const Text(
+                                  'Full Extracted Text',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                initiallyExpanded: false,
+                                children: <Widget>[
+                                  Container(
+                                    constraints: const BoxConstraints(
+                                      maxHeight: 300,
+                                    ), // Limit height
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16.0,
+                                      vertical: 8.0,
+                                    ),
+                                    child: SingleChildScrollView(
+                                      // Allow scrolling for long text
+                                      child: SelectableText(
+                                        // Use SelectableText for copying
+                                        medokiDataAsync.value?['transcription']
+                                                as String? ??
+                                            'Transcription not available.',
+                                        style: const TextStyle(fontSize: 12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          // --- End Full Transcription Section ---
+                        ], // End of children when file is selected
               ),
             ),
           ),
         ),
-        // --- Floating Chat Widget ---
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: DocumentChatWidget(selectedFilePath: selectedFilePath),
-        ),
+        // --- Floating Chat Widget (Positioned at the bottom) ---
+        const Divider(height: 1), // Add a divider above chat
+        DocumentChatWidget(
+          selectedFilePath: widget.selectedFilePath,
+        ), // Use widget.
         // --- End Floating Chat Widget ---
-      ],
+      ], // End of main Column
     );
-    /* Original Column structure (pre-Stack) - keeping for reference if needed
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // --- Top Sticky Section ---
-        // Image Preview (if applicable) - Removed Expanded, added ConstrainedBox
-        if (isImage)
-          ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxHeight: 200, // Limit max height of the image preview
-            ),
-            child: Container(
-              margin: EdgeInsets.zero, // Removed bottom margin completely
-              // Removed decoration to remove the border
-              child: ClipRRect(
-                // Clip the image to rounded corners (optional, but keeps rounding)
-                borderRadius: BorderRadius.circular(4.0),
-                child: Center(
-                  // Center the image within the ClipRRect
-                  child: Image.file(
-                    File(selectedFilePath!),
-                    fit: BoxFit.contain, // Show the whole image
-                    errorBuilder: (context, error, stackTrace) {
-                      // Show an error icon if image fails to load
-                      return const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.error_outline,
-                              color: Colors.red,
-                              size: 40,
-                            ),
-                            SizedBox(height: 8),
-                            Text('Could not load image preview.'),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
-          )
-        else // Placeholder if not an image
-          Container(
-            height: 150, // Fixed height placeholder
-            margin: EdgeInsets.zero, // Removed bottom margin completely
-            decoration: BoxDecoration(
-              color: Colors.grey.shade200,
-              border: Border.all(color: Colors.grey.shade300),
-              borderRadius: BorderRadius.circular(4.0),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.insert_drive_file_outlined,
-                size: 50,
-                color: Colors.grey,
-              ),
-            ),
-          ),
-
-        const SizedBox(height: 8.0), // Add spacing between image and text
-        // Removed Transform.translate
-        Padding(
-          // Add padding for the row
-          padding: const EdgeInsets.symmetric(
-            horizontal: 4.0,
-          ), // Add horizontal padding if needed
-          child: Row(
-            // Use Row for horizontal layout
-            mainAxisAlignment:
-                MainAxisAlignment.spaceBetween, // Space between items
-            children: [
-              // File Name (Smaller Font) - Use Expanded to handle overflow
-              Expanded(
-                child: Text(
-                  selectedFileName ?? 'Unknown File',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.normal,
-                    fontSize: 11,
-                    height: 0.8, // Further reduce line height
-                  ), // Smaller font, normal weight
-                  overflow: TextOverflow.ellipsis, // Handle long filenames
-                  maxLines: 1, // Ensure it stays on one line
-                ),
-              ),
-              // Spacer removed, using MainAxisAlignment.spaceBetween
-              // File Size (Smaller Font)
-              Text(
-                selectedFileSize != null
-                    ? formatBytes(selectedFileSize!) // Use the helper function
-                    : 'Unknown size',
-                style: TextStyle(
-                  color: Colors.grey.shade700,
-                  fontSize: 10,
-                  height: 0.8, // Further reduce line height
-                ), // Smaller font
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8.0), // Add spacing before the divider
-        // --- End Top Sticky Section ---
-
-        // --- Bottom Scrollable Section ---
-        // Wrap the rest in an Expanded Column
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start, // Keep alignment
-            children: [
-              const Divider(height: 8.0), // Further reduced Divider height
-              // Placeholder for future AI summary or actions
-              const Text(
-                'AI Summary / Actions:',
-                style: TextStyle(fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 8.0),
-              // Use the helper method to build the content
-              Expanded(child: _buildSummaryContent(context)),
-            ],
-          ),
-        ),
-        // --- End Bottom Scrollable Section ---
-
-        // --- Floating Chat Widget ---
-        // const Divider(height: 1, thickness: 1), // Separator removed, handled by chat widget border/shadow
-        // DocumentChatWidget(selectedFilePath: selectedFilePath), // Moved to Stack
-        // --- End Floating Chat Widget ---
-      ],
-    );
-*/
   }
 }

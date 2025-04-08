@@ -43,16 +43,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _pickDirectory() async {
     try {
       String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Select Medical Files Directory',
+        dialogTitle: 'Select Medical Records Directory', // Rename title
       );
 
       if (selectedDirectory != null && mounted) {
         // Call provider notifier to update path
         await ref
             .read(settingsProvider.notifier)
-            .updateMedicalFilesPath(selectedDirectory);
+            .updateMedicalRecordsPath(
+              selectedDirectory,
+            ); // Use renamed function
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Medical files path saved.')),
+          const SnackBar(
+            content: Text('Medical records path saved.'),
+          ), // Rename message
         );
       } else if (mounted) {
         // User canceled the picker
@@ -178,7 +182,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body:
-          settingsState.isLoading && settingsState.medicalFilesPath == null
+          settingsState.isLoading &&
+                  settingsState.medicalRecordsPath ==
+                      null // Use renamed property
               ? const Center(
                 child: CircularProgressIndicator(),
               ) // Show loading only initially
@@ -192,13 +198,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     // --- Storage Section ---
                     _buildSectionTitle("Storage"),
                     _buildSettingRow(
-                      label: "Medical Files Path",
+                      label: "Medical Records Path", // Rename label
                       control: Column(
                         // Use Column for path text and button
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            settingsState.medicalFilesPath ?? 'Not set',
+                            settingsState.medicalRecordsPath ??
+                                'Not set', // Use renamed property
                             style: const TextStyle(fontSize: 14),
                           ),
                           const SizedBox(height: 8),

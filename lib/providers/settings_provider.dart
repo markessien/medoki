@@ -3,7 +3,7 @@ import '../services/settings_service.dart'; // Import the service and enum
 
 // 1. State Model for Settings
 class SettingsState {
-  final String? medicalFilesPath;
+  final String? medicalRecordsPath; // Rename property
   final AiModelType selectedAiModel; // Added
   final String? geminiApiKey;
   final String? openAiApiKey; // Added
@@ -11,7 +11,7 @@ class SettingsState {
   final String? error;
 
   const SettingsState({
-    this.medicalFilesPath,
+    this.medicalRecordsPath, // Rename property
     this.selectedAiModel = AiModelType.medoki, // Default to Medoki
     this.geminiApiKey,
     this.openAiApiKey,
@@ -20,7 +20,7 @@ class SettingsState {
   });
 
   SettingsState copyWith({
-    String? medicalFilesPath,
+    String? medicalRecordsPath, // Rename property
     AiModelType? selectedAiModel, // Added
     String? geminiApiKey,
     String? openAiApiKey, // Added
@@ -29,7 +29,8 @@ class SettingsState {
     bool clearError = false, // Helper to clear error explicitly
   }) {
     return SettingsState(
-      medicalFilesPath: medicalFilesPath ?? this.medicalFilesPath,
+      medicalRecordsPath:
+          medicalRecordsPath ?? this.medicalRecordsPath, // Rename property
       selectedAiModel: selectedAiModel ?? this.selectedAiModel, // Added
       geminiApiKey: geminiApiKey ?? this.geminiApiKey,
       openAiApiKey: openAiApiKey ?? this.openAiApiKey, // Added
@@ -53,13 +54,15 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
     try {
       // Ensure service is initialized (might be redundant if done at startup)
       // Load all settings
-      final path = await _settingsService.getMedicalFilesPath();
+      final path =
+          await _settingsService
+              .getMedicalRecordsPath(); // Use renamed function
       final selectedModel = await _settingsService.getSelectedAiModel();
       final geminiKey = await _settingsService.getGeminiApiKey();
       final openAiKey = await _settingsService.getOpenAiApiKey();
 
       state = state.copyWith(
-        medicalFilesPath: path,
+        medicalRecordsPath: path, // Rename property
         selectedAiModel: selectedModel,
         geminiApiKey: geminiKey,
         openAiApiKey: openAiKey,
@@ -73,12 +76,18 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
     }
   }
 
-  // Update Medical Files Path
-  Future<void> updateMedicalFilesPath(String path) async {
+  // Update Medical Records Path
+  Future<void> updateMedicalRecordsPath(String path) async {
+    // Rename function
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      await _settingsService.setMedicalFilesPath(path);
-      state = state.copyWith(medicalFilesPath: path, isLoading: false);
+      await _settingsService.setMedicalRecordsPath(
+        path,
+      ); // Use renamed function
+      state = state.copyWith(
+        medicalRecordsPath: path,
+        isLoading: false,
+      ); // Rename property
     } catch (e) {
       state = state.copyWith(
         isLoading: false,

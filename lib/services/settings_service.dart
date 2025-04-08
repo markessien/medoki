@@ -34,7 +34,8 @@ extension AiModelTypeExtension on AiModelType {
 
 class SettingsService {
   // Keys for SharedPreferences (non-sensitive)
-  static const String _medicalFilesPathKey = 'medicalFilesPath';
+  static const String _medicalRecordsPathKey =
+      'medicalRecordsPath'; // Rename key
   static const String _selectedAiModelKey = 'selectedAiModel';
 
   // Keys for FlutterSecureStorage (sensitive)
@@ -68,16 +69,18 @@ class SettingsService {
     }
   }
 
-  // Get the stored medical files path
-  Future<String?> getMedicalFilesPath() async {
+  // Get the stored medical records path
+  Future<String?> getMedicalRecordsPath() async {
+    // Rename function
     await _ensurePrefsInitialized();
-    return _prefs.getString(_medicalFilesPathKey);
+    return _prefs.getString(_medicalRecordsPathKey); // Use renamed key
   }
 
-  // Set the medical files path
-  Future<void> setMedicalFilesPath(String path) async {
+  // Set the medical records path
+  Future<void> setMedicalRecordsPath(String path) async {
+    // Rename function
     await _ensurePrefsInitialized();
-    await _prefs.setString(_medicalFilesPathKey, path);
+    await _prefs.setString(_medicalRecordsPathKey, path); // Use renamed key
   }
 
   // --- AI Model Selection (SharedPreferences) ---

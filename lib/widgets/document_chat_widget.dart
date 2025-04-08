@@ -73,9 +73,11 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
     return Container(
       padding: const EdgeInsets.all(8.0),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface.withOpacity(0.95),
+        // Use a slightly more distinct background color
+        color: Theme.of(context).colorScheme.surfaceVariant,
         border: Border(
-          top: BorderSide(color: Colors.grey.shade300, width: 1.0),
+          // Make the top border slightly darker
+          top: BorderSide(color: Colors.grey.shade400, width: 1.0),
         ),
         boxShadow: [
           BoxShadow(
