@@ -3,8 +3,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart'; // Required for BuildContext
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
+import 'ai_service.dart'; // Import AI Service
 import '../providers/settings_provider.dart'; // To get the base path
 import '../widgets/medical_records_page.dart'; // To refresh the provider (Renamed file)
+import '../providers/file_processing_provider.dart'; // Import status provider
+import '../providers/newly_added_files_provider.dart'; // Import newly added files provider
 
 // Define allowed file types (adjust as needed)
 const List<String> _allowedExtensions = [
@@ -22,6 +25,7 @@ const List<String> _allowedExtensions = [
 
 class FileService {
   final WidgetRef ref; // Use WidgetRef to access providers
+  // AIService will be instantiated inside the method where needed, passing ref
 
   FileService(this.ref);
 
@@ -53,6 +57,8 @@ class FileService {
       if (result != null && result.files.isNotEmpty) {
         int successCount = 0;
         List<String> errors = [];
+        List<String> addedFilePaths =
+            []; // Keep track of successfully added files
 
         for (PlatformFile file in result.files) {
           if (file.path != null) {
@@ -69,6 +75,7 @@ class FileService {
               // Copy the file
               await File(sourcePath).copy(destinationPath);
               successCount++;
+              addedFilePaths.add(destinationPath); // Track successful copy
             } catch (e) {
               errors.add('Error copying "$fileName": $e');
               print("Error copying file $sourcePath: $e");
@@ -78,9 +85,40 @@ class FileService {
           }
         }
 
-        // Refresh the file list provider after adding files
+        // Set initial status and refresh UI *before* starting analysis
         if (successCount > 0) {
-          ref.refresh(medicalRecordsProvider); // Use renamed provider
+          final statusNotifier = ref.read(
+            fileProcessingStatusProvider.notifier,
+          );
+          final aiService = ref.read(
+            aiServiceProvider,
+          ); // Read the AI service provider
+          final initialStatuses = {
+            for (var path in addedFilePaths) path: ProcessingStatus.pending,
+          };
+          statusNotifier.setStatuses(initialStatuses);
+          // Also add to newly added files provider
+          ref.read(newlyAddedFilesProvider.notifier).addFiles(addedFilePaths);
+          ref.refresh(
+            medicalRecordsProvider,
+          ); // Refresh list to show pending items & new label
+
+          // Trigger AI analysis asynchronously for each new file
+          for (final filePath in addedFilePaths) {
+            // Use Future.microtask to avoid blocking and allow UI to update
+            Future.microtask(() async {
+              print('Starting AI analysis for: ${p.basename(filePath)}');
+              // AI Service needs to update status internally (processing -> completed/failed)
+              await aiService.extractDataFromFile(filePath, (step) {
+                // Optional: Log detailed steps if needed
+                // print("Step for $filePath: $step");
+              });
+              // Refresh the list again after analysis finishes for this file
+              // to potentially update sorting if dates were extracted.
+              // Debouncing might be better here in a real app.
+              ref.refresh(medicalRecordsProvider);
+            });
+          }
         }
 
         // Construct return message

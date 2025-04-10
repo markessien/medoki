@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'dart:convert'; // For jsonDecode
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
 import 'package:path/path.dart' as p;
 import 'package:intl/intl.dart'; // Import date formatting
@@ -11,7 +10,7 @@ import '../providers/file_extraction_provider.dart'; // Import the new provider
 import '../services/ai_service.dart';
 import 'document_chat_widget.dart';
 
-// Helper function to format bytes (moved from main.dart)
+// Helper function to format bytes
 String formatBytes(int bytes, [int decimals = 2]) {
   if (bytes <= 0) return "0 B";
   const suffixes = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
@@ -32,9 +31,8 @@ final medokiFileContentProvider =
           return data; // Return the whole map (transcription + summary)
         } catch (e) {
           print("Error reading/parsing $medokiFilePath: $e");
-          throw Exception(
-            'Error reading analysis file: $e',
-          ); // Throw for error state
+          // Return null instead of throwing, let UI handle missing data
+          return null;
         }
       }
       return null; // Return null if file doesn't exist
@@ -45,18 +43,12 @@ class SummarySidebar extends ConsumerStatefulWidget {
   final String? selectedFilePath;
   final String? selectedFileName;
   final int? selectedFileSize;
-  // Remove parameters managed internally or by provider:
-  // final String? aiSummaryContent;
-  // final String? extractionError;
-  // final bool isExtracting;
-  // final VoidCallback? onExtractDataPressed;
 
   const SummarySidebar({
     super.key,
     required this.selectedFilePath,
     required this.selectedFileName,
     required this.selectedFileSize,
-    // Remove parameters from constructor
   });
 
   @override
@@ -64,65 +56,75 @@ class SummarySidebar extends ConsumerStatefulWidget {
 }
 
 class _SummarySidebarState extends ConsumerState<SummarySidebar> {
-  // Local state and extraction method removed - now handled by fileExtractionProvider
-
   // Helper method to build the summary content area using provider state
   Widget _buildSummaryContent(
     BuildContext context,
     AsyncValue<Map<String, dynamic>?> medokiDataAsync,
     FileExtractionState extractionState, // Get extraction state as parameter
   ) {
-    // Priority: Extraction Loading > Extraction Error > Medoki Loading > Medoki Error > Medoki Content > Button
+    // --- Priority 1: Extraction Status ---
     if (extractionState.isLoading) {
-      // Display loading indicator from extraction provider
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text("Extracting data..."),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(extractionState.currentStep ?? "Starting extraction..."),
           ],
         ),
       );
     } else if (extractionState.error != null) {
-      // Display the error message from extraction provider
-      return SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Text(
-            extractionState.error!,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.error,
-              fontSize: 13,
+      // Show extraction error and the button to allow retrying
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text(
+              "Extraction Failed: ${extractionState.error!}",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontSize: 13,
+              ),
             ),
           ),
-        ),
+          _buildExtractButton(context), // Offer retry
+        ],
       );
-    } else {
-      // Use the medoki content provider's state
+    }
+    // --- Priority 2: Medoki File Status (only if extraction is idle/successful) ---
+    else {
       return medokiDataAsync.when(
-        loading:
-            () => const Center(
-              child: CircularProgressIndicator(),
-            ), // Loading medoki file
-        error: // Error loading medoki file
-            (err, stack) => SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
+        // Show button while loading medoki file
+        loading: () => _buildExtractButton(context),
+        // Show error reading medoki file AND the button
+        error: (err, stack) {
+          print("Error reading medoki file: $err");
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
                 child: Text(
-                  'Error loading summary: $err',
+                  'Could not read existing analysis data.',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.error,
                     fontSize: 13,
                   ),
                 ),
               ),
-            ),
+              _buildExtractButton(context), // Offer re-extract
+            ],
+          );
+        },
+        // Medoki file read attempted (data might be null or contain data)
         data: (medokiData) {
           final summary = medokiData?['summary'] as String?;
+          // Case 1: Valid summary exists - show it
           if (summary != null && summary.isNotEmpty) {
-            // Display the summary text from medoki provider
             return TextField(
               controller: TextEditingController(text: summary),
               maxLines: null,
@@ -134,33 +136,46 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
               ),
               style: const TextStyle(fontSize: 13),
             );
-          } else {
-            // Display the button if no summary exists (and no extraction error/loading)
-            return Center(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.biotech_outlined),
-                label: const Text('Extract Data with AI'),
-                onPressed:
-                    () =>
-                        ref
-                            .read(
-                              fileExtractionProvider(
-                                widget.selectedFilePath,
-                              ).notifier,
-                            )
-                            .extractData(), // Call provider method
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                ),
-              ),
-            );
+          }
+          // Case 2: No valid summary (medokiData is null OR summary is missing/empty) - show button
+          else {
+            return _buildExtractButton(context);
           }
         },
       );
     }
+  }
+
+  // Helper widget for the Extract button to avoid repetition
+  Widget _buildExtractButton(BuildContext context) {
+    return Center(
+      child: ElevatedButton.icon(
+        icon: const Icon(Icons.biotech_outlined),
+        label: const Text('Extract Data with AI'),
+        onPressed: () {
+          // Prevent triggering extraction if already loading (extra safety)
+          if (ref
+              .read(fileExtractionProvider(widget.selectedFilePath))
+              .isLoading)
+            return;
+
+          if (widget.selectedFilePath != null) {
+            ref
+                .read(fileExtractionProvider(widget.selectedFilePath!).notifier)
+                .extractData();
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Error: No file selected for extraction.'),
+              ),
+            );
+          }
+        },
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
+      ),
+    );
   }
 
   // Helper to format and display the date
@@ -172,13 +187,10 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
       );
     }
     try {
-      // Attempt to parse the date string (assuming ISO 8601 format)
       final dateTime = DateTime.parse(dateString).toLocal();
-      // Format the date nicely (e.g., "July 15, 2024")
       final formattedDate = DateFormat.yMMMMd().format(dateTime);
       return Text(formattedDate, style: const TextStyle(fontSize: 13));
     } catch (e) {
-      // Handle cases where the date string is not in the expected format
       print("Error parsing date string '$dateString': $e");
       return Text(
         'Invalid date format found: $dateString',
@@ -190,32 +202,166 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
     }
   }
 
-  // _buildSidebarHeader method removed - header is now in AppToolbar
+  // --- Helper Function for Image Dialog ---
+  void _showImageDialog(BuildContext context, String imagePath) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (
+        BuildContext buildContext,
+        Animation<double> animation,
+        Animation<double> secondaryAnimation,
+      ) {
+        return Align(
+          alignment: const Alignment(-0.7, 0.0),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.7,
+              maxHeight: MediaQuery.of(context).size.height * 0.8,
+            ),
+            child: Dialog(
+              insetPadding: const EdgeInsets.all(10.0),
+              child: Container(
+                padding: const EdgeInsets.all(12.0),
+                child: InteractiveViewer(
+                  panEnabled: true,
+                  boundaryMargin: const EdgeInsets.all(20),
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: Image.file(
+                    File(imagePath),
+                    errorBuilder: (context, error, stackTrace) {
+                      return const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.error_outline,
+                              color: Colors.red,
+                              size: 50,
+                            ),
+                            SizedBox(height: 8),
+                            Text('Could not load image.'),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: animation.drive(CurveTween(curve: Curves.easeOutCubic)),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+  // --- End Helper Function ---
+
+  // --- Helper Function for Lab Results Table ---
+  Widget _buildLabResultsTable(BuildContext context, dynamic labResultsData) {
+    if (labResultsData == null ||
+        !(labResultsData is List) ||
+        labResultsData.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(8.0),
+        child: Text(
+          'No structured lab results found in document.',
+          style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
+        ),
+      );
+    }
+
+    final labResults = labResultsData.cast<Map<String, dynamic>>();
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columnSpacing: 15,
+        headingRowHeight: 30,
+        dataRowMinHeight: 30,
+        dataRowMaxHeight: 40,
+        headingTextStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+        ),
+        dataTextStyle: const TextStyle(fontSize: 12),
+        columns: const [
+          DataColumn(label: Text('Test Name')),
+          DataColumn(label: Text('Value')),
+          DataColumn(label: Text('Units')),
+          DataColumn(label: Text('Reference')),
+        ],
+        rows:
+            labResults.map((result) {
+              return DataRow(
+                cells: [
+                  DataCell(Text(result['test_name']?.toString() ?? '')),
+                  DataCell(Text(result['value']?.toString() ?? '')),
+                  DataCell(Text(result['units']?.toString() ?? '')),
+                  DataCell(Text(result['reference_range']?.toString() ?? '')),
+                ],
+              );
+            }).toList(),
+      ),
+    );
+  }
+  // --- End Helper Function ---
 
   @override
   Widget build(BuildContext context) {
-    // Watch the medoki content provider
+    // Watch the medoki content provider for the selected file
     final medokiDataAsync =
         widget.selectedFilePath != null
             ? ref.watch(medokiFileContentProvider(widget.selectedFilePath!))
             : const AsyncValue.data(null);
 
-    // Watch the extraction state provider for the current file
+    // Watch the extraction state provider for the selected file
     final extractionState = ref.watch(
-      fileExtractionProvider(widget.selectedFilePath),
+      fileExtractionProvider(
+        widget.selectedFilePath,
+      ), // Watch state even if path is null
     );
+
+    // --- Listener for Auto-Refresh after Extraction ---
+    // Listen to the extraction provider state changes to trigger medoki refresh
+    if (widget.selectedFilePath != null) {
+      ref.listen<
+        FileExtractionState
+      >(fileExtractionProvider(widget.selectedFilePath!), (previous, next) {
+        // Check if extraction just finished successfully
+        if (previous?.isLoading == true &&
+            !next.isLoading &&
+            next.error == null) {
+          print(
+            "Extraction finished for ${widget.selectedFilePath!}, refreshing medoki content.",
+          );
+          // Refresh the medoki content provider to load the new data
+          ref.refresh(medokiFileContentProvider(widget.selectedFilePath!));
+        }
+      });
+    }
+    // --- End Listener ---
 
     // Build the main content structure using Column
     return Column(
       children: [
-        // --- Header removed from here ---
-
         // --- Scrollable Content Area ---
         Expanded(
-          // Make the content scrollable
           child: SingleChildScrollView(
             child: Padding(
-              padding: const EdgeInsets.all(8.0), // Add padding around content
+              padding: const EdgeInsets.all(8.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 // Only show content if a file is selected
@@ -235,10 +381,11 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
                         ]
                         : [
                           // --- Top Section (Image/Placeholder, Details) ---
-                          // Calculate isImage and build the top section only when filePath is not null
                           Builder(
                             builder: (context) {
-                              // Safe to use ! here because we are inside the non-null check block
+                              final filePath =
+                                  widget
+                                      .selectedFilePath!; // Safe ! due to outer check
                               final isImage = [
                                 '.png',
                                 '.jpg',
@@ -247,54 +394,94 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
                                 '.bmp',
                                 '.webp',
                               ].any(
-                                (ext) => widget.selectedFilePath!
-                                    .toLowerCase()
-                                    .endsWith(ext),
+                                (ext) => filePath.toLowerCase().endsWith(ext),
                               );
 
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   if (isImage)
-                                    ConstrainedBox(
-                                      constraints: const BoxConstraints(
-                                        maxHeight: 200,
-                                      ),
-                                      child: Container(
-                                        margin: EdgeInsets.zero,
-                                        child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(
-                                            4.0,
+                                    GestureDetector(
+                                      onTap:
+                                          () => _showImageDialog(
+                                            context,
+                                            filePath,
                                           ),
-                                          child: Center(
-                                            child: Image.file(
-                                              File(widget.selectedFilePath!),
-                                              fit: BoxFit.contain,
-                                              errorBuilder: (
-                                                context,
-                                                error,
-                                                stackTrace,
-                                              ) {
-                                                return const Center(
-                                                  child: Column(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Icon(
-                                                        Icons.error_outline,
-                                                        color: Colors.red,
-                                                        size: 40,
-                                                      ),
-                                                      SizedBox(height: 8),
-                                                      Text(
-                                                        'Could not load image preview.',
-                                                      ),
-                                                    ],
-                                                  ),
-                                                );
-                                              },
+                                      child: ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          maxHeight: 200,
+                                        ),
+                                        child: Container(
+                                          margin: EdgeInsets.zero,
+                                          decoration: BoxDecoration(
+                                            border: Border.all(
+                                              color: Colors.grey.shade300,
+                                              width: 1,
                                             ),
+                                            borderRadius: BorderRadius.circular(
+                                              4.0,
+                                            ),
+                                          ),
+                                          child: Stack(
+                                            alignment: Alignment.center,
+                                            children: [
+                                              Center(
+                                                child: ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        3.0,
+                                                      ),
+                                                  child: Image.file(
+                                                    File(filePath),
+                                                    fit: BoxFit.contain,
+                                                    errorBuilder: (
+                                                      context,
+                                                      error,
+                                                      stackTrace,
+                                                    ) {
+                                                      return const Center(
+                                                        child: Column(
+                                                          mainAxisAlignment:
+                                                              MainAxisAlignment
+                                                                  .center,
+                                                          children: [
+                                                            Icon(
+                                                              Icons
+                                                                  .error_outline,
+                                                              color: Colors.red,
+                                                              size: 40,
+                                                            ),
+                                                            SizedBox(height: 8),
+                                                            Text(
+                                                              'Could not load image preview.',
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      );
+                                                    },
+                                                  ),
+                                                ),
+                                              ),
+                                              Positioned(
+                                                bottom: 4,
+                                                right: 4,
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(
+                                                    2,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black
+                                                        .withOpacity(0.4),
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons.zoom_in_map,
+                                                    color: Colors.white,
+                                                    size: 18,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ),
@@ -372,14 +559,10 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8.0,
                                 vertical: 4.0,
-                              ), // Add padding
+                              ),
                               child: Row(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment
-                                        .baseline, // Align text baselines
-                                textBaseline:
-                                    TextBaseline
-                                        .alphabetic, // Specify the baseline type
+                                crossAxisAlignment: CrossAxisAlignment.baseline,
+                                textBaseline: TextBaseline.alphabetic,
                                 children: [
                                   const Text(
                                     'Test Date: ',
@@ -389,7 +572,6 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
                                     ),
                                   ),
                                   Expanded(
-                                    // Allow date text to wrap if needed
                                     child: _buildDateDisplay(
                                       context,
                                       medokiDataAsync.value?['testDateUTC']
@@ -403,7 +585,6 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
 
                           // --- AI Summary Section ---
                           const Divider(height: 8.0),
-                          // Use Container with height constraints for summary area
                           Container(
                             constraints: const BoxConstraints(minHeight: 100),
                             child: _buildSummaryContent(
@@ -414,6 +595,44 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
                           ),
                           // --- End AI Summary Section ---
 
+                          // --- Lab Results Section (Collapsible) ---
+                          if (medokiDataAsync.hasValue &&
+                              medokiDataAsync.value != null &&
+                              (medokiDataAsync.value?['lab_results'] as List?)
+                                      ?.isNotEmpty ==
+                                  true)
+                            Theme(
+                              data: Theme.of(
+                                context,
+                              ).copyWith(dividerColor: Colors.transparent),
+                              child: ExpansionTile(
+                                tilePadding: const EdgeInsets.symmetric(
+                                  horizontal: 8.0,
+                                  vertical: 0,
+                                ),
+                                childrenPadding: const EdgeInsets.symmetric(
+                                  horizontal: 8.0,
+                                  vertical: 4.0,
+                                ),
+                                title: const Text(
+                                  'Lab Results',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                initiallyExpanded: true,
+                                children: [
+                                  _buildLabResultsTable(
+                                    context,
+                                    medokiDataAsync.value?['lab_results'],
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                          // --- End Lab Results Section ---
+                          const Divider(height: 8.0), // Add divider
                           // --- Full Transcription Section (Collapsible) ---
                           if (medokiDataAsync.hasValue &&
                               medokiDataAsync.value != null)
@@ -439,15 +658,13 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
                                   Container(
                                     constraints: const BoxConstraints(
                                       maxHeight: 300,
-                                    ), // Limit height
+                                    ),
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 16.0,
                                       vertical: 8.0,
                                     ),
                                     child: SingleChildScrollView(
-                                      // Allow scrolling for long text
                                       child: SelectableText(
-                                        // Use SelectableText for copying
                                         medokiDataAsync.value?['transcription']
                                                 as String? ??
                                             'Transcription not available.',
@@ -466,9 +683,7 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
         ),
         // --- Floating Chat Widget (Positioned at the bottom) ---
         const Divider(height: 1), // Add a divider above chat
-        DocumentChatWidget(
-          selectedFilePath: widget.selectedFilePath,
-        ), // Use widget.
+        DocumentChatWidget(selectedFilePath: widget.selectedFilePath),
         // --- End Floating Chat Widget ---
       ], // End of main Column
     );

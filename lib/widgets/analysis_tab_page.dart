@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/file_service.dart'; // Import the file service
 import 'document_chat_widget.dart'; // Import the chat widget
@@ -65,8 +63,10 @@ class AnalysisTabPage extends ConsumerWidget {
                 error:
                     (err, stack) =>
                         Center(child: Text('Error checking for files: $err')),
-                data: (fileList) {
-                  if (fileList.isEmpty) {
+                data: (recordsData) {
+                  // Changed variable name for clarity
+                  // Access the 'items' list from the record
+                  if (recordsData.items.isEmpty) {
                     // No files exist anywhere yet - show prompt and button
                     return Center(
                       child: Column(

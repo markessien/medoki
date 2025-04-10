@@ -10,15 +10,28 @@ import 'package:mediciapp/providers/selected_file_provider.dart'; // Use package
 import 'package:mediciapp/providers/settings_provider.dart'; // Use package import
 import 'package:mediciapp/services/file_service.dart'; // Use package import, Import the file service
 import 'package:intl/intl.dart'; // Import date formatting package
+import 'dart:convert'; // For jsonDecode
 import 'package:mediciapp/widgets/summary_sidebar.dart'; // Use package import, Re-use the summary sidebar
+import 'package:mediciapp/providers/file_processing_provider.dart'; // Import the processing status provider
+import 'package:mediciapp/providers/newly_added_files_provider.dart'; // Import the newly added files provider
 
 // --- Providers for File Listing and Filtering ---
 
-// Define a type for the file list item data, including medoki status
-typedef FileListItem = ({File file, DateTime modified, bool hasMedoki});
+// Define a type for the file list item data, including medoki status, diagnosis date, and processing status
+typedef FileListItem =
+    ({
+      File file,
+      DateTime modified,
+      bool hasMedoki,
+      DateTime? diagnosisDate, // Added diagnosis date
+      ProcessingStatus status, // Added processing status
+      bool isNew, // Flag for newly added files
+    });
 
 // Provider to hold the currently selected year filter (null means 'All')
-final yearFilterProvider = StateProvider<String?>((ref) => null);
+final yearFilterProvider = StateProvider<int?>(
+  (ref) => null,
+); // Changed to int?
 
 // Provider to hold the current search query
 final searchQueryProvider = StateProvider<String>((ref) => '');
@@ -26,95 +39,50 @@ final searchQueryProvider = StateProvider<String>((ref) => '');
 // Provider to hold the set of multi-selected file paths
 final multiSelectedFilesProvider = StateProvider<Set<String>>((ref) => {});
 
-// Provider to fetch the names of top-level directories (potential years)
-final yearFoldersProvider = FutureProvider<List<String>>((ref) async {
+// yearFoldersProvider removed - years are now derived from data
+
+// Define a type for the provider result, including items and available years
+typedef MedicalRecordsResult =
+    ({List<FileListItem> items, List<int> availableYears});
+
+// Provider to fetch records, extract diagnosis dates, determine available years, and get processing status
+final medicalRecordsProvider = FutureProvider<MedicalRecordsResult>((
+  ref,
+) async {
   final settings = ref.watch(settingsProvider);
   final basePath = settings.medicalRecordsPath;
-  if (basePath == null || basePath.isEmpty) return [];
-
-  final directory = Directory(basePath);
-  if (!await directory.exists()) return [];
-
-  final List<String> folderNames = [];
-  final items = await directory.list().toList();
-  for (final item in items) {
-    if (item is Directory) {
-      final folderName = p.basename(item.path);
-      // Exclude trash folder and potentially other non-year folders if needed
-      if (folderName.toLowerCase() !=
-          'trash' /* && int.tryParse(folderName) != null */ ) {
-        folderNames.add(folderName);
-      }
-    }
-  }
-  folderNames.sort(); // Sort alphabetically
-  return folderNames;
-});
-
-// Provider to fetch and hold the filtered list of records with modification dates
-final medicalRecordsProvider = FutureProvider<List<FileListItem>>((ref) async {
-  final settings = ref.watch(settingsProvider);
-  final basePath = settings.medicalRecordsPath; // Use renamed property
-  final selectedYear = ref.watch(yearFilterProvider);
-  final searchQuery =
-      ref.watch(searchQueryProvider).toLowerCase(); // Watch search query
+  final selectedYearFilter = ref.watch(yearFilterProvider); // Now int?
+  final searchQuery = ref.watch(searchQueryProvider).toLowerCase();
 
   if (basePath == null || basePath.isEmpty) {
-    return [];
+    // Return empty result if base path is invalid
+    return (items: <FileListItem>[], availableYears: <int>[]);
   }
 
   final directory = Directory(basePath);
   if (!await directory.exists()) {
-    return [];
+    // Return empty result if directory doesn't exist
+    return (items: <FileListItem>[], availableYears: <int>[]);
   }
 
-  // --- Step 1: Get initial list of files based on year filter ---
-  final List<File> filesToProcess = [];
-  if (selectedYear == null) {
-    // No year filter: Get files from base and one level deep (excluding trash)
-    final List<FileSystemEntity> topLevelItems =
-        await directory.list().toList();
-    for (final item in topLevelItems) {
-      if (item is File) {
-        if (!item.path.toLowerCase().endsWith('.medoki.md')) {
-          filesToProcess.add(item);
-        }
-      } else if (item is Directory) {
-        if (p.basename(item.path).toLowerCase() != 'trash') {
-          try {
-            final subItems = await item.list().toList();
-            for (final subItem in subItems) {
-              if (subItem is File) {
-                if (!subItem.path.toLowerCase().endsWith('.medoki.md')) {
-                  filesToProcess.add(subItem);
-                }
-              }
-            }
-          } catch (e) {
-            // TODO: Implement proper logging
-          }
-        }
-      }
+  // --- Step 1: Get ALL files recursively (excluding trash and .medoki.md) ---
+  final List<File> allFiles = [];
+  final trashPath = p.join(basePath, 'trash');
+  final stream = directory.list(recursive: true, followLinks: false);
+  await for (final entity in stream) {
+    // Check if the entity is within the trash directory
+    if (entity.path.startsWith(trashPath)) {
+      continue; // Skip files/dirs inside trash
     }
-  } else {
-    // Year filter active: Get files only from the selected year directory
-    final yearDirectoryPath = p.join(basePath, selectedYear);
-    final yearDirectory = Directory(yearDirectoryPath);
-    if (await yearDirectory.exists()) {
-      try {
-        final subItems = await yearDirectory.list().toList();
-        for (final subItem in subItems) {
-          if (subItem is File) {
-            if (!subItem.path.toLowerCase().endsWith('.medoki.md')) {
-              filesToProcess.add(subItem);
-            }
-          }
-        }
-      } catch (e) {
-        // TODO: Implement proper logging
+    if (entity is File) {
+      // Exclude .medoki.md files directly
+      if (!entity.path.toLowerCase().endsWith('.medoki.md')) {
+        allFiles.add(entity);
       }
     }
   }
+  // filesToProcess is now allFiles, year filtering happens later
+  final List<File> filesToProcess = allFiles;
 
   // --- Step 2: Filter by Search Query (Filename and .medoki.md content) ---
   List<File> searchedFiles = [];
@@ -149,32 +117,132 @@ final medicalRecordsProvider = FutureProvider<List<FileListItem>>((ref) async {
     searchedFiles = results.whereType<File>().toList();
   }
 
-  // --- Step 3: Get modification dates, check medoki status, and create final list items ---
-  final List<FileListItem> fileListItems = [];
+  // --- Step 3: Get modification dates, check medoki status, extract diagnosis date ---
+  final List<FileListItem> allFileItems = [];
+  final Set<int> availableYearsSet = {}; // Use a Set to store unique years
+  final statusMap = ref.watch(
+    fileProcessingStatusMapProvider,
+  ); // Watch the status map
+  final newlyAddedPaths = ref.watch(
+    newlyAddedFilesProvider,
+  ); // Watch the newly added files set
   for (final file in searchedFiles) {
-    // Use the final filtered list
     try {
       final modifiedDate = await file.lastModified();
-      // Check for corresponding .medoki.md file
       final medokiPath = '${file.path}.medoki.md';
-      final hasMedoki = await File(medokiPath).exists();
-      fileListItems.add((
+      final medokiFile = File(medokiPath);
+      final hasMedoki = await medokiFile.exists();
+      DateTime? diagnosisDate;
+
+      if (hasMedoki) {
+        try {
+          final content = await medokiFile.readAsString();
+          final data = jsonDecode(content) as Map<String, dynamic>;
+          final dateString =
+              data['testDateUTC'] is String
+                  ? data['testDateUTC'] as String
+                  : null;
+          if (dateString != null && dateString.isNotEmpty) {
+            diagnosisDate = DateTime.tryParse(dateString)?.toLocal();
+            if (diagnosisDate != null) {
+              availableYearsSet.add(diagnosisDate.year); // Add year to the set
+            }
+          }
+        } catch (e) {
+          print("Error reading/parsing medoki file $medokiPath: $e");
+        }
+      }
+
+      // Get the processing status for the current file
+      // Get the status record from the map, or null if not present
+      final statusRecord = statusMap[file.path];
+      // Extract the status enum, defaulting to none if the record is null
+      final status = statusRecord?.status ?? ProcessingStatus.none;
+
+      allFileItems.add((
         file: file,
         modified: modifiedDate,
         hasMedoki: hasMedoki,
+        diagnosisDate: diagnosisDate,
+        status: status, // Include the status
+        isNew: newlyAddedPaths.contains(file.path), // Check if file is new
       ));
     } catch (e) {
-      // TODO: Implement proper logging
-      // Optionally add with a default date or skip
+      print("Error processing file ${file.path}: $e");
     }
   }
 
-  // --- Step 4: Sort the final list ---
-  fileListItems.sort(
-    (a, b) => p.basename(a.file.path).compareTo(p.basename(b.file.path)),
-  );
+  // --- Step 4: Filter by Selected Year (if any) ---
+  final List<FileListItem> filteredItems;
+  final selectedYear = ref.watch(
+    yearFilterProvider,
+  ); // Read the selected year (int?)
+  if (selectedYear == null) {
+    filteredItems = allFileItems; // No year filter, show all
+  } else {
+    filteredItems =
+        allFileItems.where((item) {
+          // Keep item if its diagnosis year matches the filter
+          if (item.diagnosisDate?.year == selectedYear) {
+            return true;
+          }
+          // Keep item if it's new and hasn't completed processing yet
+          if (item.isNew &&
+              (item.status == ProcessingStatus.none ||
+                  item.status == ProcessingStatus.pending ||
+                  item.status == ProcessingStatus.processing)) {
+            return true;
+          }
+          // Otherwise, exclude it
+          return false;
+        }).toList();
+  }
 
-  return fileListItems;
+  // --- Step 5: Sort the filtered list ---
+  // --- Step 5: Sort the filtered list (Prioritize Processing/Pending) ---
+  filteredItems.sort((a, b) {
+    // Priority: Processing > Pending > Others
+    if (a.status == ProcessingStatus.processing &&
+        b.status != ProcessingStatus.processing)
+      return -1;
+    if (b.status == ProcessingStatus.processing &&
+        a.status != ProcessingStatus.processing)
+      return 1;
+    if (a.status == ProcessingStatus.pending &&
+        b.status != ProcessingStatus.pending)
+      return -1;
+    if (b.status == ProcessingStatus.pending &&
+        a.status != ProcessingStatus.pending)
+      return 1;
+
+    // If statuses are the same priority level (or both are completed/failed/none), sort by date/name
+    final dateA = a.diagnosisDate;
+    final dateB = b.diagnosisDate;
+
+    if (dateA != null && dateB != null) {
+      // Both have dates, sort descending by date
+      final dateComparison = dateB.compareTo(dateA);
+      if (dateComparison != 0) return dateComparison;
+      // If dates are the same, sort by filename ascending
+      return p.basename(a.file.path).compareTo(p.basename(b.file.path));
+    } else if (dateA != null) {
+      // Only A has a date, A comes first (among non-processing/pending)
+      return -1;
+    } else if (dateB != null) {
+      // Only B has a date, B comes first (among non-processing/pending)
+      return 1;
+    } else {
+      // Neither has a date, sort by filename ascending
+      return p.basename(a.file.path).compareTo(p.basename(b.file.path));
+    }
+  });
+
+  // --- Step 6: Prepare and return the result ---
+  final List<int> availableYears =
+      availableYearsSet.toList()
+        ..sort((a, b) => b.compareTo(a)); // Sort years descending
+
+  return (items: filteredItems, availableYears: availableYears);
 });
 
 // --- End Providers ---
@@ -298,11 +366,14 @@ class _MedicalRecordsPageState extends ConsumerState<MedicalRecordsPage> {
         ).showSnackBar(SnackBar(content: Text(feedbackMessage)));
       }
 
-      // 4. Clear Selection and Refresh List
+      // 4. Clear Selection, Remove Statuses, and Refresh List
       ref.read(multiSelectedFilesProvider.notifier).state = {};
       ref
           .read(selectedFileProvider.notifier)
-          .clearSelection(); // Also clear single select just in case
+          .clearSelection(); // Also clear single select
+      ref
+          .read(fileProcessingStatusProvider.notifier)
+          .removeStatuses(filesToDeletePaths); // Remove statuses
       ref.refresh(medicalRecordsProvider); // Refresh the record list
     } catch (e) {
       // TODO: Implement proper logging
@@ -474,6 +545,8 @@ class _MedicalRecordsPageState extends ConsumerState<MedicalRecordsPage> {
     ); // Watch multi-select state
     final multiSelectNotifier = ref.read(multiSelectedFilesProvider.notifier);
     final singleSelectNotifier = ref.read(selectedFileProvider.notifier);
+    final selectedYear = ref.watch(yearFilterProvider); // Watch selected year
+    final yearFilterNotifier = ref.read(yearFilterProvider.notifier);
 
     // Wrap the Row in a Scaffold to allow for a FloatingActionButton
     return Scaffold(
@@ -507,190 +580,261 @@ class _MedicalRecordsPageState extends ConsumerState<MedicalRecordsPage> {
         }, // Removed incorrect comment here
         child: Row(
           children: [
-            // Main content area (File List) - Wrap Expanded in a Stack
+            // Main content area (File List + Year Filters)
             Expanded(
-              child: Stack(
-                // Wrap with Stack for positioning the FAB
+              child: Column(
+                // Use Column to stack Filters and List
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Original content (the file list based on async value)
-                  recordsAsyncValue.when(
-                    // Rename variable
-                    loading:
-                        () => const Center(child: CircularProgressIndicator()),
-                    error:
-                        (err, stack) =>
-                            Center(child: Text('Error loading files: $err')),
-                    data: (items) {
-                      if (items.isEmpty) {
-                        // Show a centered button when no records are found
-                        return Center(
-                          child: ElevatedButton.icon(
-                            icon: const Icon(Icons.add_circle_outline),
-                            label: const Text('Add Medical Records'),
-                            onPressed: () async {
-                              final fileService = FileService(ref);
-                              final resultMessage = await fileService
-                                  .pickAndAddFiles(context);
-                              // Show result in SnackBar
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(resultMessage)),
-                                );
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 16,
+                  // --- Year Filter Chips Removed (Now handled in AppToolbar) ---
+                  // --- File List ---
+                  Expanded(
+                    // Make the list take remaining space
+                    child: Stack(
+                      // Keep Stack for FAB
+                      children: [
+                        recordsAsyncValue.when(
+                          loading:
+                              () => const Center(
+                                child: CircularProgressIndicator(),
                               ),
-                              textStyle:
-                                  Theme.of(context).textTheme.titleMedium,
-                            ),
-                          ),
-                        );
-                      }
-                      // Use ListView for simplicity, could use GridView later
-                      return ListView.builder(
-                        itemCount: items.length,
-                        itemBuilder: (context, index) {
-                          final fileItem = items[index];
-                          final file = fileItem.file;
-                          final modifiedDate = fileItem.modified;
-                          final name = p.basename(file.path);
-                          final path = file.path;
-
-                          // Format the date
-                          final formattedDate = DateFormat.yMMMd().format(
-                            modifiedDate,
-                          );
-
-                          // Determine selection state
-                          final bool isSelected =
-                              multiSelectedFiles.isNotEmpty
-                                  ? multiSelectedFiles.contains(path)
-                                  : selectedFileState.path == path;
-                          final Color? tileColor =
-                              isSelected
-                                  ? Theme.of(
-                                    context,
-                                  ).colorScheme.primary.withOpacity(0.15)
-                                  : null;
-
-                          return GestureDetector(
-                            onSecondaryTapUp:
-                                (details) => _showContextMenu(
-                                  context,
-                                  details.globalPosition,
-                                  path,
-                                  name,
-                                  // false, // Removed isDirectory parameter
-                                  ref,
-                                ),
-                            onLongPress: () {
-                              // Initiate multi-select
-                              if (!multiSelectedFiles.contains(path)) {
-                                multiSelectNotifier.state = {
-                                  ...multiSelectedFiles,
-                                  path,
-                                };
-                                if (selectedFileState.path != null) {
-                                  singleSelectNotifier.clearSelection();
-                                }
-                              }
-                            },
-                            child: ListTile(
-                              tileColor: tileColor,
-                              leading: const Icon(Icons.insert_drive_file),
-                              title: Text(name),
-                              subtitle: Text(
-                                formattedDate,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade600,
-                                ),
+                          error:
+                              (err, stack) => Center(
+                                child: Text('Error loading files: $err'),
                               ),
-                              onTap: () {
-                                FocusScope.of(context).requestFocus(_focusNode);
+                          data: (data) {
+                            final items =
+                                data.items; // Extract items from tuple
+                            if (items.isEmpty) {
+                              // Show a centered button when no records are found
+                              return Center(
+                                child: ElevatedButton.icon(
+                                  icon: const Icon(Icons.add_circle_outline),
+                                  label: const Text('Add Medical Records'),
+                                  onPressed: () async {
+                                    final fileService = FileService(ref);
+                                    final resultMessage = await fileService
+                                        .pickAndAddFiles(context);
+                                    // Show result in SnackBar
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(content: Text(resultMessage)),
+                                      );
+                                    }
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 24,
+                                      vertical: 16,
+                                    ),
+                                    textStyle:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                ),
+                              );
+                            }
+                            // Use ListView
+                            return ListView.builder(
+                              itemCount: items.length, // Use items.length
+                              itemBuilder: (context, index) {
+                                final fileItem =
+                                    items[index]; // Use items[index]
+                                final file = fileItem.file;
+                                final diagnosisDate =
+                                    fileItem
+                                        .diagnosisDate; // Get diagnosis date
+                                final status =
+                                    fileItem.status; // Get processing status
+                                final isNew = fileItem.isNew; // Get new status
+                                final name = p.basename(file.path);
+                                final path = file.path;
 
-                                final currentSelection = Set<String>.from(
-                                  multiSelectedFiles,
+                                // Format the diagnosis date if available
+                                final String? formattedDate =
+                                    diagnosisDate != null
+                                        ? DateFormat.yMMMd().format(
+                                          diagnosisDate,
+                                        )
+                                        : null; // Format only if date exists
+
+                                // Determine selection state
+                                final bool isSelected =
+                                    multiSelectedFiles.isNotEmpty
+                                        ? multiSelectedFiles.contains(path)
+                                        : selectedFileState.path == path;
+                                final Color? tileColor =
+                                    isSelected
+                                        ? Theme.of(
+                                          context,
+                                        ).colorScheme.primary.withOpacity(0.15)
+                                        : null;
+
+                                return GestureDetector(
+                                  onSecondaryTapUp:
+                                      (details) => _showContextMenu(
+                                        context,
+                                        details.globalPosition,
+                                        path,
+                                        name,
+                                        // false, // Removed isDirectory parameter
+                                        ref,
+                                      ),
+                                  onLongPress: () {
+                                    // Initiate multi-select
+                                    if (!multiSelectedFiles.contains(path)) {
+                                      multiSelectNotifier.state = {
+                                        ...multiSelectedFiles,
+                                        path,
+                                      };
+                                      if (selectedFileState.path != null) {
+                                        singleSelectNotifier.clearSelection();
+                                      }
+                                    }
+                                  },
+                                  child: ListTile(
+                                    tileColor: tileColor,
+                                    leading: const Icon(
+                                      Icons.insert_drive_file,
+                                    ),
+                                    title: Row(
+                                      // Use Row to add "New" label
+                                      children: [
+                                        Text(name),
+                                        if (isNew) // Conditionally show the "New" chip
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 8.0,
+                                            ),
+                                            child: Chip(
+                                              label: const Text('New'),
+                                              padding: EdgeInsets.zero,
+                                              labelPadding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 4.0,
+                                                  ),
+                                              labelStyle: TextStyle(
+                                                fontSize: 10,
+                                                color:
+                                                    Theme.of(
+                                                      context,
+                                                    ).colorScheme.onSecondary,
+                                              ),
+                                              backgroundColor:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.secondary,
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                              materialTapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    subtitle:
+                                        formattedDate != null
+                                            ? Text(
+                                              formattedDate, // Display formatted diagnosis date
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: Colors.grey.shade600,
+                                              ),
+                                            )
+                                            : null, // Show nothing if no diagnosis date
+                                    onTap: () {
+                                      FocusScope.of(
+                                        context,
+                                      ).requestFocus(_focusNode);
+
+                                      final currentSelection = Set<String>.from(
+                                        multiSelectedFiles,
+                                      );
+
+                                      if (_isShiftPressed &&
+                                          _shiftAnchorIndex != null) {
+                                        // Shift+Click: Range selection
+                                        final start = min(
+                                          _shiftAnchorIndex!,
+                                          index,
+                                        );
+                                        final end = max(
+                                          _shiftAnchorIndex!,
+                                          index,
+                                        );
+                                        for (int i = start; i <= end; i++) {
+                                          // Access file path correctly
+                                          currentSelection.add(
+                                            items[i].file.path,
+                                          );
+                                        }
+                                        multiSelectNotifier.state =
+                                            currentSelection;
+                                        singleSelectNotifier.clearSelection();
+                                      } else if (_isCtrlPressed) {
+                                        // Ctrl+Click: Toggle selection
+                                        if (currentSelection.contains(path)) {
+                                          currentSelection.remove(path);
+                                        } else {
+                                          currentSelection.add(path);
+                                        }
+                                        multiSelectNotifier.state =
+                                            currentSelection;
+                                        _shiftAnchorIndex = index;
+                                        singleSelectNotifier.clearSelection();
+                                      } else {
+                                        // Simple Click: Single selection
+                                        multiSelectNotifier.state = {};
+                                        singleSelectNotifier.selectFile(path);
+                                        _shiftAnchorIndex = index;
+                                      }
+                                    },
+                                    trailing: _buildTrailingWidget(
+                                      status,
+                                      fileItem.hasMedoki,
+                                    ),
+                                  ),
                                 );
-
-                                if (_isShiftPressed &&
-                                    _shiftAnchorIndex != null) {
-                                  // Shift+Click: Range selection
-                                  final start = min(_shiftAnchorIndex!, index);
-                                  final end = max(_shiftAnchorIndex!, index);
-                                  for (int i = start; i <= end; i++) {
-                                    currentSelection.add(items[i].file.path);
-                                  }
-                                  multiSelectNotifier.state = currentSelection;
-                                  singleSelectNotifier.clearSelection();
-                                } else if (_isCtrlPressed) {
-                                  // Ctrl+Click: Toggle selection
-                                  if (currentSelection.contains(path)) {
-                                    currentSelection.remove(path);
-                                  } else {
-                                    currentSelection.add(path);
-                                  }
-                                  multiSelectNotifier.state = currentSelection;
-                                  _shiftAnchorIndex = index;
-                                  singleSelectNotifier.clearSelection();
-                                } else {
-                                  // Simple Click: Single selection
-                                  multiSelectNotifier.state = {};
-                                  singleSelectNotifier.selectFile(path);
-                                  _shiftAnchorIndex = index;
+                              },
+                            );
+                          },
+                        ),
+                        // Positioned FAB at the bottom-left
+                        Align(
+                          alignment: Alignment.bottomLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: FloatingActionButton.extended(
+                              onPressed: () {
+                                // Placeholder action: Trigger a refresh
+                                // TODO: Implement proper logging
+                                ref.refresh(medicalRecordsProvider);
+                                // TODO: Implement actual rescan logic
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Rescanning files... (refreshing list)',
+                                      ),
+                                      duration: Duration(seconds: 1),
+                                    ),
+                                  );
                                 }
                               },
-                              trailing: Icon(
-                                // Add the status icon here
-                                fileItem.hasMedoki
-                                    ? Icons.check_circle
-                                    : Icons.help_outline,
-                                size: 18.0,
-                                color:
-                                    fileItem.hasMedoki
-                                        ? Colors.green.shade600
-                                        : Colors.orange.shade700,
-                              ),
+                              label: const Text('Rescan All Medical Records'),
+                              icon: const Icon(Icons.refresh),
                             ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                  // Positioned FAB at the bottom-left
-                  Align(
-                    alignment: Alignment.bottomLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: FloatingActionButton.extended(
-                        onPressed: () {
-                          // Placeholder action: Trigger a refresh
-                          // TODO: Implement proper logging
-                          ref.refresh(medicalRecordsProvider);
-                          // TODO: Implement actual rescan logic
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Rescanning files... (refreshing list)',
-                                ),
-                                duration: Duration(seconds: 1),
-                              ),
-                            );
-                          }
-                        },
-                        label: const Text('Rescan All Medical Records'),
-                        icon: const Icon(Icons.refresh),
-                      ),
+                          ),
+                        ),
+                      ], // End Stack children
                     ),
-                  ),
-                ],
+                  ), // End Expanded (for ListView)
+                ], // End Column children (Filters + List)
               ),
             ),
-            // Add vertical divider
+            // Vertical divider
             const VerticalDivider(width: 1, thickness: 1),
             // Sidebar (Re-use SummarySidebar)
             SizedBox(
@@ -705,5 +849,36 @@ class _MedicalRecordsPageState extends ConsumerState<MedicalRecordsPage> {
         ), // Closing Row
       ), // Closing RawKeyboardListener
     );
+  }
+}
+
+// Helper widget to build the trailing icon/indicator based on status
+Widget _buildTrailingWidget(ProcessingStatus status, bool hasMedoki) {
+  switch (status) {
+    case ProcessingStatus.processing:
+      return const SizedBox(
+        width: 20, // Give it some space
+        height: 20,
+        child: CircularProgressIndicator(strokeWidth: 2.0),
+      );
+    case ProcessingStatus.pending:
+      return const Tooltip(
+        message: 'Pending Analysis',
+        child: Icon(Icons.hourglass_empty, size: 18.0, color: Colors.blueGrey),
+      );
+    case ProcessingStatus.failed:
+      return const Tooltip(
+        message: 'Analysis Failed',
+        child: Icon(Icons.error_outline, size: 18.0, color: Colors.redAccent),
+      );
+    case ProcessingStatus.completed:
+    case ProcessingStatus.none: // Treat 'none' like 'completed' for display
+    default: // Fallback
+      // Show check only if medoki file exists (meaning analysis was successful at some point)
+      return Icon(
+        hasMedoki ? Icons.check_circle : Icons.help_outline,
+        size: 18.0,
+        color: hasMedoki ? Colors.green.shade600 : Colors.orange.shade700,
+      );
   }
 }

@@ -5,12 +5,19 @@ import 'dart:typed_data'; // Needed for Uint8List
 import 'package:google_generative_ai/google_generative_ai.dart' as google_ai;
 import 'package:dart_openai/dart_openai.dart'; // Import OpenAI
 import 'package:path/path.dart' as p; // Import path package
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
 
 import 'settings_service.dart'; // Import SettingsService for enum and keys
+import '../providers/file_processing_provider.dart'; // Import status provider
+import '../widgets/medical_records_page.dart'; // Import for refreshing medicalRecordsProvider
 
 class AIService {
+  final Ref _ref; // Store the ref internally
   final SettingsService _settingsService =
       SettingsService(); // Get singleton instance
+
+  // Private constructor
+  AIService._(this._ref);
 
   // Helper to get MIME type from file extension
   String? _getMimeType(String filePath) {
@@ -39,9 +46,20 @@ class AIService {
   }
 
   // Updated method signature - no longer takes apiKey directly
-  Future<String?> extractDataFromFile(String filePath) async {
+  Future<String?> extractDataFromFile(
+    String filePath,
+    void Function(String step) updateProgress, // Add callback parameter
+  ) async {
+    final statusNotifier = _ref.read(fileProcessingStatusProvider.notifier);
+    // Update status to 'processing' immediately
+    statusNotifier.setStatus(filePath, ProcessingStatus.processing);
+    // Refresh the list provider *after* setting status to processing
+    // This ensures the UI shows the spinner immediately.
+    _ref.refresh(medicalRecordsProvider);
+
     try {
       // --- 0. Get Settings ---
+      updateProgress("Loading settings..."); // Report progress
       final selectedModel = await _settingsService.getSelectedAiModel();
       String? apiKey;
 
@@ -71,6 +89,7 @@ class AIService {
       }
 
       // --- 1. Read File and Check Existence ---
+      updateProgress("Reading file..."); // Report progress
       final file = File(filePath);
       if (!await file.exists()) {
         return "Error: File not found at $filePath";
@@ -94,6 +113,7 @@ class AIService {
       }
 
       // --- 3. Step 1: Transcription ---
+      updateProgress("Transcribing document..."); // Report progress
       print("Starting Transcription for: $filePath");
       final transcriptionPrompt =
           'Extract all text content from the attached document/image as accurately as possible. Format the output as Markdown.';
@@ -103,7 +123,7 @@ class AIService {
         switch (selectedModel) {
           case AiModelType.gemini:
             final geminiModel = google_ai.GenerativeModel(
-              model: 'gemini-1.5-flash', // Use a capable model
+              model: 'gemini-2.0-flash', // Use a capable model
               apiKey: apiKey!,
             );
             final content = [
@@ -153,7 +173,113 @@ class AIService {
       }
       print("Transcription completed for: $filePath");
 
-      // --- 4. Step 2: Date Extraction ---
+      // --- 4. Step 2: Lab Result Extraction ---
+      updateProgress("Extracting lab results..."); // Report progress
+      print("Starting Lab Result Extraction for: $filePath");
+      final labExtractionPrompt = '''
+Analyze the following medical record transcription. If it contains laboratory test results, extract each result into a JSON object with the following keys: "test_name", "value", "units", "reference_range".
+
+Return the results as a JSON array of these objects.
+
+Example format:
+[
+  {"test_name": "Hemoglobin A1c", "value": "6.5", "units": "%", "reference_range": "4.0-5.6"},
+  {"test_name": "Glucose", "value": "110", "units": "mg/dL", "reference_range": "70-99"}
+]
+
+If no lab results are found, return an empty JSON array `[]`.
+
+Transcription:
+```markdown
+$transcriptionMarkdown
+```
+''';
+      List<Map<String, dynamic>>? extractedLabResults;
+
+      try {
+        String? rawLabResultString;
+        switch (selectedModel) {
+          case AiModelType.gemini:
+            final geminiModel = google_ai.GenerativeModel(
+              model: 'gemini-2.0-flash', // Or a model suitable for text tasks
+              apiKey: apiKey!,
+            );
+            final content = [google_ai.Content.text(labExtractionPrompt)];
+            final response = await geminiModel.generateContent(content);
+            rawLabResultString = response.text?.trim();
+            break;
+          case AiModelType.openai:
+            final chatCompletion = await OpenAI.instance.chat.create(
+              model: "gpt-4o", // Or a cheaper text model
+              responseFormat: {"type": "json_object"}, // Request JSON output
+              messages: [
+                OpenAIChatCompletionChoiceMessageModel(
+                  role: OpenAIChatMessageRole.user,
+                  content: [
+                    OpenAIChatCompletionChoiceMessageContentItemModel.text(
+                      labExtractionPrompt,
+                    ),
+                  ],
+                ),
+              ],
+            );
+            rawLabResultString =
+                chatCompletion.choices.first.message.content?.first.text
+                    ?.trim();
+            break;
+          case AiModelType.medoki:
+            // Placeholder for Medoki AI lab extraction
+            rawLabResultString = "[]"; // Default to empty array
+            break;
+        }
+
+        // Attempt to parse the JSON response
+        if (rawLabResultString != null && rawLabResultString.isNotEmpty) {
+          // Clean potential markdown code fences
+          if (rawLabResultString.startsWith('```json')) {
+            rawLabResultString = rawLabResultString.substring(7);
+          }
+          if (rawLabResultString.endsWith('```')) {
+            rawLabResultString = rawLabResultString.substring(
+              0,
+              rawLabResultString.length - 3,
+            );
+          }
+          rawLabResultString =
+              rawLabResultString.trim(); // Trim again after removing fences
+
+          try {
+            final decodedJson = jsonDecode(rawLabResultString);
+            if (decodedJson is List) {
+              // Validate structure (basic check)
+              extractedLabResults =
+                  decodedJson.whereType<Map<String, dynamic>>().toList();
+              // Optional: Add deeper validation per item schema here
+            } else {
+              print(
+                "Warning: Lab result extraction returned valid JSON, but it wasn't a List: ${rawLabResultString}",
+              );
+              extractedLabResults = []; // Treat as no results if not a list
+            }
+          } catch (e) {
+            print(
+              "Error decoding lab results JSON ($selectedModel): $e. Raw response: ${rawLabResultString}",
+            );
+            extractedLabResults = []; // Treat as no results on decode error
+          }
+        } else {
+          extractedLabResults = []; // Treat empty/null response as no results
+        }
+      } catch (e) {
+        print("Error during Lab Result Extraction ($selectedModel): $e");
+        extractedLabResults = []; // Default to empty list on error
+      }
+      print(
+        "Lab Result Extraction completed for: $filePath. Found ${extractedLabResults?.length ?? 0} results.",
+      );
+
+      // --- 5. Step 3: Date Extraction ---
+      updateProgress("Extracting date..."); // Report progress
       print("Starting Date Extraction for: $filePath");
       // Updated prompt to ask for ISO 8601 UTC date
       final dateExtractionPrompt =
@@ -164,7 +290,7 @@ class AIService {
         switch (selectedModel) {
           case AiModelType.gemini:
             final geminiModel = google_ai.GenerativeModel(
-              model: 'gemini-1.5-flash', // Or a model suitable for text tasks
+              model: 'gemini-2.0-flash', // Or a model suitable for text tasks
               apiKey: apiKey!,
             );
             final content = [google_ai.Content.text(dateExtractionPrompt)];
@@ -225,7 +351,8 @@ class AIService {
       }
       print("Date Extraction completed for: $filePath");
 
-      // --- 5. Step 3: Summarization ---
+      // --- 6. Step 4: Summarization ---
+      updateProgress("Summarizing content..."); // Report progress
       print("Starting Summarization for: $filePath");
       final summarizationPrompt =
           'Provide a concise summary (1-3 sentences) of the key information in the following medical record transcription:\n\n```markdown\n$transcriptionMarkdown\n```';
@@ -236,7 +363,7 @@ class AIService {
           case AiModelType.gemini:
             final geminiModel = google_ai.GenerativeModel(
               model:
-                  'gemini-1.5-flash', // Can use the same or a different text model
+                  'gemini-2.0-flash', // Can use the same or a different text model
               apiKey: apiKey!,
             );
             final content = [google_ai.Content.text(summarizationPrompt)];
@@ -276,12 +403,15 @@ class AIService {
       }
       print("Summarization completed for: $filePath");
 
-      // --- 6. Structure and Save JSON ---
+      // --- 7. Structure and Save JSON ---
+      updateProgress("Saving results..."); // Report progress
       final medokiData = {
         'transcription': transcriptionMarkdown.trim(),
         'summary': summaryText.trim(),
         'testDateUTC':
             extractedDateString, // Add the extracted date (can be null)
+        'lab_results':
+            extractedLabResults ?? [], // Add the extracted lab results
       };
       // Use an encoder with indentation for readability
       final jsonEncoder = JsonEncoder.withIndent('  ');
@@ -297,12 +427,28 @@ class AIService {
         return "Error: Could not save analysis results.";
       }
 
-      // --- 7. Return Summary for UI ---
-      // Still return the summary, but the date is now saved in the file.
+      // --- 8. Update Status and Return Summary ---
+      statusNotifier.setStatus(
+        filePath,
+        ProcessingStatus.completed,
+      ); // Set status to completed
+      // Still return the summary, but the full data is now saved in the file.
       return summaryText.trim();
     } catch (e, stacktrace) {
       print("Error during AI data extraction ($filePath): $e\n$stacktrace");
+      statusNotifier.setStatus(
+        filePath,
+        ProcessingStatus.failed,
+      ); // Set status to failed
       return "Error: An unexpected error occurred during AI extraction: $e";
+    } finally {
+      // Refresh list one last time in case state changed quickly
+      _ref.refresh(medicalRecordsProvider);
     }
   }
 }
+
+/// Provider for AIService
+final aiServiceProvider = Provider<AIService>((ref) {
+  return AIService._(ref);
+});
