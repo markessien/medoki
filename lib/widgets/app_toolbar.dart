@@ -8,29 +8,35 @@ import 'package:flutter/foundation.dart'; // For kDebugMode
 
 import '../providers/selected_file_provider.dart';
 import '../providers/settings_provider.dart';
-import '../services/ai_service.dart'; // Still needed for settings enum? Maybe not.
+// import '../services/ai_service.dart'; // No longer directly needed here
 import '../services/file_service.dart';
 import '../services/batch_analysis_service.dart';
-import '../services/settings_service.dart'; // Needed to get records path
+import '../services/settings_service.dart'; // Needed to get records path and for refresh button
 import '../services/trend_analysis_service.dart'; // Import the new service
-import 'medical_records_page.dart';
+import 'medical_records_page.dart'; // For medicalRecordsProvider, yearFilterProvider
 import '../providers/file_extraction_provider.dart';
+// import 'package:path/path.dart' as p; // Import path package for joining paths - Already imported on line 6
 import 'recommendations_confirmation_dialog.dart'; // Keep for batch analysis button
-import '../widgets/analysis_tab_page.dart'; // Import analysisResultsProvider
+import 'package:path_provider/path_provider.dart'; // Import for saving summary
+import '../widgets/analysis_tab_page.dart'; // Import analysisSummaryProvider for refresh
+import '../providers/analysis_providers.dart'; // Import the shared status and refresh providers
+import '../services/html_report_generator.dart'; // Import the new HTML generator service
 
-// Change to ConsumerStatefulWidget to manage TextEditingController and debounce Timer
+// final analysisStatusProvider = StateProvider<String>((ref) => 'Ready'); // MOVED to analysis_providers.dart
+
+// --- Main AppToolbar Widget ---
+
 class AppToolbar extends ConsumerStatefulWidget implements PreferredSizeWidget {
   final int currentIndex;
   final int analysisTabIndex;
-  final VoidCallback onAddRecord;
-  // Add other callbacks if needed
+  final VoidCallback
+  onAddRecord; // Kept for now, though FileService handles picking
 
   const AppToolbar({
     super.key,
     required this.currentIndex,
     required this.analysisTabIndex,
     required this.onAddRecord,
-    // Add other callbacks if needed
   });
 
   @override
@@ -41,18 +47,16 @@ class AppToolbar extends ConsumerStatefulWidget implements PreferredSizeWidget {
 }
 
 class _AppToolbarState extends ConsumerState<AppToolbar> {
+  // State remains here as it's shared or controls actions
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   Timer? _debounce;
-  bool _isSearchExpanded = false;
-  bool _isBatchAnalysisRunning = false; // Renamed for clarity
-  bool _isTrendAnalysisRunning = false; // State for the new analysis
+  bool _isTrendAnalysisRunning = false;
+  bool _isBatchAnalysisRunning = false; // For the other analysis type if needed
 
   @override
   void initState() {
     super.initState();
-    // Initialize search field if needed from provider state (optional)
-    // _searchController.text = ref.read(searchQueryProvider);
     _searchController.addListener(_onSearchChanged);
   }
 
@@ -60,7 +64,7 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
   void dispose() {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
-    _searchFocusNode.dispose(); // Dispose focus node
+    _searchFocusNode.dispose();
     _debounce?.cancel();
     super.dispose();
   }
@@ -69,9 +73,7 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
   void _onSearchChanged() {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () {
-      // Update the provider only after debounce duration
       if (mounted) {
-        // Check if widget is still mounted
         ref.read(searchQueryProvider.notifier).state = _searchController.text;
       }
     });
@@ -79,437 +81,76 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch the provider state needed for the header
     final selectedFileState = ref.watch(selectedFileProvider);
 
     return Container(
-      height: kToolbarHeight, // Use standard toolbar height
+      height: kToolbarHeight,
       color: Theme.of(context).colorScheme.surface,
-      child: _buildToolbarContent(context, ref, selectedFileState),
+      child:
+          widget.currentIndex == widget.analysisTabIndex
+              ? _AnalysisToolbarContent(
+                isTrendAnalysisRunning: _isTrendAnalysisRunning,
+                onStartTrendAnalysis: _startTrendAnalysis,
+              )
+              : _MedicalRecordsToolbarContent(
+                selectedFileState: selectedFileState,
+                searchController: _searchController,
+                searchFocusNode: _searchFocusNode,
+                onAddRecord:
+                    widget.onAddRecord, // Pass down if needed by Add button
+              ),
     );
   }
 
-  // Build the content based on the current tab
-  Widget _buildToolbarContent(
-    BuildContext context,
-    WidgetRef ref, // ref is available via ConsumerState
-    SelectedFileState selectedFileState,
-  ) {
-    // Access widget properties using widget.propertyName
-    if (widget.currentIndex == widget.analysisTabIndex) {
-      // Content for the Analysis tab toolbar
-      return _buildAnalysisToolbarContent(context, ref);
-    } else {
-      // Content for the Medical Records tab toolbar
-      return _buildMedicalRecordsToolbarContent(
-        context,
-        ref,
-        selectedFileState,
-      );
-    }
-  }
-
-  // --- Helper Method for Analysis Tab Toolbar ---
-  Widget _buildAnalysisToolbarContent(BuildContext context, WidgetRef ref) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.start, // Align button to the left
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 16.0),
-          // Restore original placeholder behavior for Start Analysis button
-          child: ElevatedButton.icon(
-            onPressed:
-                _isTrendAnalysisRunning
-                    ? null
-                    : _startTrendAnalysis, // Call the new method
-            icon:
-                _isTrendAnalysisRunning
-                    ? Container(
-                      width: 24,
-                      height: 24,
-                      padding: const EdgeInsets.all(2.0),
-                      child: const CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 3,
-                      ),
-                    )
-                    : const Icon(Icons.science_outlined), // Keep icon
-            label: Text(
-              _isTrendAnalysisRunning ? 'Analyzing...' : 'Start Trend Analysis',
-            ), // Update label based on state
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.primary,
-              foregroundColor: Theme.of(context).colorScheme.onPrimary,
-            ),
-          ),
-        ),
-        // Add other analysis-specific toolbar items here if needed in the future
-      ],
-    );
-  }
-
-  // --- Helper Method for Medical Records Tab Toolbar ---
-  Widget _buildMedicalRecordsToolbarContent(
-    BuildContext context,
-    WidgetRef ref,
-    SelectedFileState selectedFileState,
-  ) {
-    return Row(
-      children: [
-        // Left side: Controls (Add button and Filters)
-        Expanded(
-          child: Row(
-            children: [
-              // Add Button
-              Padding(
-                padding: const EdgeInsets.only(left: 8.0),
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    // Make async
-                    final fileService = FileService(ref); // Instantiate service
-                    final resultMessage = await fileService.pickAndAddFiles(
-                      context,
-                    ); // Call service
-                    // Show result in SnackBar
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(
-                        context,
-                      ).showSnackBar(SnackBar(content: Text(resultMessage)));
-                    }
-                    // Note: widget.onAddRecord is likely obsolete now, but kept for compatibility unless removed elsewhere
-                    // widget.onAddRecord();
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Medical Records...'), // Rename label
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16), // Keep spacing before filters
-              // Filter Chips
-              Expanded(child: _buildFilterChips(ref)), // Wrap chips in Expanded
-              const SizedBox(
-                width: 8,
-              ), // Reduced spacing before search icon/field
-              // AnimatedSwitcher for Search Icon/Field
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                transitionBuilder: (Widget child, Animation<double> animation) {
-                  return ScaleTransition(scale: animation, child: child);
-                },
-                child:
-                    _isSearchExpanded
-                        ? Container(
-                          // Container to constrain width
-                          key: const ValueKey('searchField'),
-                          width: 250, // Adjust width as needed
-                          child: TextField(
-                            controller: _searchController,
-                            focusNode: _searchFocusNode,
-                            decoration: InputDecoration(
-                              hintText: 'Search files...',
-                              prefixIcon: const Icon(Icons.search, size: 20),
-                              border: OutlineInputBorder(
-                                // Corrected border definition
-                                borderRadius: BorderRadius.circular(20.0),
-                                borderSide: BorderSide.none,
-                              ),
-                              filled: true,
-                              fillColor: Colors.white.withOpacity(0.7),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16.0,
-                                vertical: 0,
-                              ),
-                              isDense: true,
-                              suffixIcon: IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () {
-                                  _searchController.clear();
-                                  setState(() {
-                                    _isSearchExpanded = false;
-                                  });
-                                  _searchFocusNode
-                                      .unfocus(); // Unfocus when closing
-                                  ref.read(searchQueryProvider.notifier).state =
-                                      ''; // Clear provider state immediately
-                                },
-                              ),
-                            ),
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                        )
-                        : IconButton(
-                          // Show search icon when not expanded
-                          key: const ValueKey('searchIcon'),
-                          icon: const Icon(Icons.search),
-                          tooltip: 'Search Files',
-                          onPressed: () {
-                            setState(() {
-                              _isSearchExpanded = true;
-                            });
-                            _searchFocusNode
-                                .requestFocus(); // Focus field on expand
-                          },
-                        ),
-              ),
-              // Optional: Keep filter icon if needed for advanced filtering
-            ],
-          ),
-        ),
-        // Add back the divider and a SizedBox to constrain the Expanded section above
-        const VerticalDivider(width: 1, thickness: 1, indent: 8, endIndent: 8),
-        // Replace SizedBox with the actual header content
-        Container(
-          width: 350, // Match sidebar width
-          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-          alignment: Alignment.center,
-          child: _buildDynamicSidebarHeader(
-            ref,
-            selectedFileState,
-          ), // Call helper
-        ),
-      ],
-    );
-  }
-
-  // --- New Helper Method for Dynamic Sidebar Header ---
-  Widget _buildDynamicSidebarHeader(
-    WidgetRef ref,
-    SelectedFileState selectedFileState,
-  ) {
-    final selectedFilePath = selectedFileState.path;
-
-    if (selectedFilePath == null) {
-      // Default "Details" title when no file is selected
-      // Consistent padding/border might not be needed if toolbar has its own styling
-      return const Center(
-        child: Text(
-          'Details',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-      );
-    } else {
-      // Watch the extraction state for the selected file
-      final extractionState = ref.watch(
-        fileExtractionProvider(selectedFilePath),
-      );
-      final bool isExtracting = extractionState.isLoading;
-
-      // Header when a file is selected: Back button, Title, Refresh button
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          // Back Button
-          IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed:
-                () => ref.read(selectedFileProvider.notifier).clearSelection(),
-            tooltip: 'Back to Details',
-            iconSize: 20.0,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-          ),
-          // Title (takes available space)
-          const Expanded(
-            child: Text(
-              'File Information',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          // Refresh Button (conditionally enabled)
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed:
-                isExtracting
-                    ? null // Disable if already extracting
-                    : () =>
-                        ref
-                            .read(
-                              fileExtractionProvider(selectedFilePath).notifier,
-                            )
-                            .extractData(), // Call provider method
-            tooltip: 'Rescan file with AI',
-            iconSize: 20.0,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            color:
-                isExtracting
-                    ? Colors
-                        .grey // Grey out when disabled
-                    : Theme.of(context).colorScheme.primary,
-          ),
-        ],
-      );
-    }
-  }
-  // --- End New Helper Method ---
-
-  // Removed _buildSidebarHeader method - logic moved to SummarySidebar
-
-  // Helper to build filter chips using medicalRecordsProvider
-  Widget _buildFilterChips(WidgetRef ref) {
-    // Watch the main provider that now contains available years
-    final recordsAsyncValue = ref.watch(medicalRecordsProvider);
-    final selectedYear = ref.watch(
-      yearFilterProvider,
-    ); // Still watch the filter state (int?)
-    final yearNotifier = ref.read(yearFilterProvider.notifier);
-
-    return recordsAsyncValue.when(
-      data: (data) {
-        final availableYears =
-            data.availableYears; // This is List<int>, already sorted descending
-        if (availableYears.isEmpty) {
-          return const SizedBox.shrink(); // No years derived, show nothing
-        }
-
-        // Use SingleChildScrollView for horizontal scrolling
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              // "All" Chip
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                child: FilterChip(
-                  label: const Text('All'),
-                  selected: selectedYear == null,
-                  onSelected: (selected) {
-                    if (selected) {
-                      yearNotifier.state = null; // Set filter to null for 'All'
-                    }
-                  },
-                  showCheckmark: false,
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                ),
-              ),
-              // Year Chips (use availableYears - List<int>)
-              ...availableYears.map(
-                (year) => Padding(
-                  // year is an int here
-                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                  child: FilterChip(
-                    label: Text(
-                      year.toString(),
-                    ), // Convert int year to String for label
-                    selected: selectedYear == year, // Compare int? with int
-                    onSelected: (selected) {
-                      // Assign int year directly to the StateProvider<int?>
-                      yearNotifier.state = selected ? year : null;
-                    },
-                    showCheckmark: false,
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-      loading:
-          () => const SizedBox(
-            // Show a small indicator while loading records/years
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-      error:
-          (err, stack) => Tooltip(
-            // Show error icon on failure
-            message: 'Error loading year filters: $err', // Show error message
-            child: const Icon(Icons.error_outline, color: Colors.red, size: 18),
-          ),
-    );
-  }
+  // --- Action Methods (Remain in the main state) ---
 
   // Method to handle the BATCH analysis process (generating .medoki.md files)
+  // This might be moved if a dedicated button is added elsewhere
   Future<void> _startBatchAnalysis() async {
-    if (_isBatchAnalysisRunning) return; // Use renamed state variable
+    if (_isBatchAnalysisRunning) return;
 
-    // Show Confirmation Dialog first (using settings for path check within service)
-    // We need to estimate the count beforehand or show a generic message.
-    // For simplicity, let's show a generic confirmation first.
-    // A more advanced approach would involve a preliminary scan by the service.
     final bool? shouldProceed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
-        // Using a generic message as file count isn't known yet easily
         return const RecommendationsConfirmationDialog();
       },
     );
 
     if (shouldProceed != true) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Analysis cancelled.')));
-      }
-      return; // Exit if user cancels
+      _showSnackBar('Analysis cancelled.');
+      return;
     }
 
-    // Set state to running and show initial feedback
     setState(() {
-      _isBatchAnalysisRunning = true; // Use renamed state variable
+      _isBatchAnalysisRunning = true;
     });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Starting analysis of medical records...'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      ref.read(analysisResultsProvider.notifier).state =
-          'Analysis starting... Please wait.';
-    }
+    final statusNotifier = ref.read(analysisStatusProvider.notifier);
+    statusNotifier.state = 'Batch analysis starting... Please wait.';
+    _showSnackBar('Starting analysis of medical records...');
 
-    final batchService = ref.read(
-      batchAnalysisServiceProvider,
-    ); // Read the provider
-    int totalFiles = 0; // Keep track of total files reported by the service
+    final batchService = ref.read(batchAnalysisServiceProvider);
+    int totalFiles = 0;
     int processedCount = 0;
     final List<String> errorMessages = [];
 
     try {
       await batchService.runBatchAnalysis(
-        // Call without ref argument
         onProgress: (message) {
           print("Batch Progress: $message");
           if (mounted) {
-            // Update the analysis results provider with progress
-            ref.read(analysisResultsProvider.notifier).state = message;
+            statusNotifier.state = message;
           }
         },
         onError: (error) {
           print("Batch Error: $error");
           errorMessages.add(error);
-          if (mounted) {
-            // Show errors as they occur? Or just collect them?
-            // Let's collect and show a summary at the end.
-            // Optionally update the provider state with error count?
-          }
         },
         onFileProcessed: (processed, total) {
-          // Update counts for final summary
           processedCount = processed;
           totalFiles = total;
-          // Optional: Update UI more granularly if needed
-          // ref.read(analysisResultsProvider.notifier).state = 'Processed $processed of $total files...';
         },
       );
 
-      // Analysis finished (successfully or with errors handled by onError)
       if (mounted) {
         String finalMessage;
         if (errorMessages.isEmpty) {
@@ -518,78 +159,63 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
         } else {
           finalMessage =
               'Batch analysis completed with ${errorMessages.length} errors out of $totalFiles files processed.';
-          // Optionally show detailed errors
           print('Errors encountered:\n${errorMessages.join('\n')}');
         }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(finalMessage),
-            duration: const Duration(seconds: 5),
-          ),
-        );
-        ref.read(analysisResultsProvider.notifier).state = finalMessage;
+        _showSnackBar(finalMessage, durationSeconds: 5);
+        statusNotifier.state = finalMessage;
       }
     } catch (e) {
-      // Catch unexpected errors during the service call itself
       print("Unexpected error during batch analysis service execution: $e");
       if (mounted) {
         final errorMessage =
             'An unexpected error occurred during batch analysis: $e';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            duration: const Duration(seconds: 5),
-          ),
-        );
-        ref.read(analysisResultsProvider.notifier).state = errorMessage;
+        _showSnackBar(errorMessage, isError: true, durationSeconds: 5);
+        statusNotifier.state = errorMessage;
       }
     } finally {
-      // Ensure the running state is always reset
       if (mounted) {
         setState(() {
-          _isBatchAnalysisRunning = false; // Use renamed state variable
+          _isBatchAnalysisRunning = false;
         });
       }
     }
   }
 
-  // --- New Method for Trend Analysis ---
+  // Method for Trend Analysis
   Future<void> _startTrendAnalysis() async {
     if (_isTrendAnalysisRunning) return;
 
     setState(() {
       _isTrendAnalysisRunning = true;
     });
-    final analysisNotifier = ref.read(analysisResultsProvider.notifier);
-    analysisNotifier.state = 'Starting trend analysis... Preparing data.';
+    final statusNotifier = ref.read(analysisStatusProvider.notifier);
+    statusNotifier.state = 'Starting trend analysis... Preparing data.';
     _showSnackBar('Starting trend analysis...');
 
     try {
-      // 1. Get Services and Settings
       final settingsService = SettingsService();
       final trendAnalysisService = ref.read(trendAnalysisServiceProvider);
       final recordsPath = await settingsService.getMedicalRecordsPath();
 
       if (recordsPath == null || recordsPath.isEmpty) {
-        analysisNotifier.state =
+        statusNotifier.state =
             'Error: Medical records path not set in Settings.';
         _showSnackBar('Error: Medical records path not set.', isError: true);
-        return; // Exit early
+        return;
       }
 
       final recordsDir = Directory(recordsPath);
       if (!await recordsDir.exists()) {
-        analysisNotifier.state =
+        statusNotifier.state =
             'Error: Medical records directory not found: $recordsPath';
         _showSnackBar(
           'Error: Medical records directory not found.',
           isError: true,
         );
-        return; // Exit early
+        return;
       }
 
-      // 2. Find and Read .medoki.md files
-      analysisNotifier.state = 'Scanning for analysis files...';
+      statusNotifier.state = 'Scanning for analysis files...';
       final List<Map<String, dynamic>> allData = [];
       final List<String> errors = [];
 
@@ -601,40 +227,36 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
           try {
             final content = await entity.readAsString();
             final jsonData = jsonDecode(content) as Map<String, dynamic>;
-            // Basic validation
             if (jsonData.containsKey('summary') &&
                 jsonData.containsKey('lab_results') &&
                 jsonData.containsKey('testDateUTC')) {
               allData.add({
-                'filePath': entity.path, // Keep track of origin for context
+                'filePath': entity.path,
                 'summary': jsonData['summary'],
                 'testDateUTC': jsonData['testDateUTC'],
                 'lab_results': jsonData['lab_results'],
               });
             } else {
               errors.add(
-                'Skipping ${p.basename(entity.path)}: Missing required keys (summary, lab_results, testDateUTC).',
+                'Skipping ${p.basename(entity.path)}: Missing required keys.',
               );
             }
           } catch (e) {
-            errors.add(
-              'Error reading or parsing ${p.basename(entity.path)}: $e',
-            );
+            errors.add('Error reading/parsing ${p.basename(entity.path)}: $e');
           }
         }
       }
 
       if (allData.isEmpty) {
-        analysisNotifier.state =
-            'No valid .medoki.md files found for analysis.';
+        statusNotifier.state = 'No valid .medoki.md files found for analysis.';
         _showSnackBar(
           'No analysis data found. Process files first.',
           isError: true,
         );
-        return; // Exit early
+        return;
       }
 
-      // Sort data by date (ascending) - handle null dates (place them first?)
+      // Sort data by date
       allData.sort((a, b) {
         final dateA =
             a['testDateUTC'] != null
@@ -645,74 +267,168 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
                 ? DateTime.tryParse(b['testDateUTC'])
                 : null;
         if (dateA == null && dateB == null) return 0;
-        if (dateA == null) return -1; // Nulls first
+        if (dateA == null) return -1;
         if (dateB == null) return 1;
         return dateA.compareTo(dateB);
       });
 
-      // 3. Consolidate Data for Prompt
-      analysisNotifier.state =
+      statusNotifier.state =
           'Consolidating data from ${allData.length} records...';
       final buffer = StringBuffer();
-      for (final data in allData) {
-        buffer.writeln('---');
-        buffer.writeln('File: ${p.basename(data['filePath'])}');
-        buffer.writeln('Date: ${data['testDateUTC'] ?? 'Unknown'}');
-        buffer.writeln('Summary: ${data['summary']}');
+      String latestRecordDataString = ''; // To store the latest record's data
+
+      for (int i = 0; i < allData.length; i++) {
+        final data = allData[i];
+        final fileName = p.basename(data['filePath']);
+        if (i == 0) {
+          // Update status only for the first file during consolidation
+          statusNotifier.state = 'Consolidating data starting with: $fileName';
+        }
+
+        final recordBuffer = StringBuffer(); // Buffer for individual record
+        recordBuffer.writeln('---');
+        recordBuffer.writeln('File: $fileName');
+        recordBuffer.writeln('Date: ${data['testDateUTC'] ?? 'Unknown'}');
+        recordBuffer.writeln('Summary: ${data['summary']}');
         if (data['lab_results'] is List &&
             (data['lab_results'] as List).isNotEmpty) {
-          buffer.writeln('Lab Results:');
+          recordBuffer.writeln('Lab Results:');
           for (final lab in data['lab_results']) {
             if (lab is Map) {
-              buffer.writeln(
+              recordBuffer.writeln(
                 '  - ${lab['test_name']}: ${lab['value']} ${lab['units']} (${lab['reference_range']})',
               );
             }
           }
         }
-        buffer.writeln();
+        recordBuffer.writeln();
+
+        final currentRecordString = recordBuffer.toString();
+        buffer.write(currentRecordString); // Append to the main buffer
+
+        // Store the latest record (last one after sorting)
+        if (i == allData.length - 1) {
+          latestRecordDataString = currentRecordString;
+        }
       }
-      final consolidatedData = buffer.toString();
+      final consolidatedData = buffer.toString(); // All data consolidated
 
-      // 4. Define the Analysis Prompt
-      final analysisPrompt = '''
-Analyze the following consolidated medical record data, which includes summaries and lab results sorted chronologically. Identify any significant trends, patterns, or potential areas of concern over time based *only* on the provided data. Focus on changes in lab values relative to their reference ranges and any recurring themes in the summaries. Provide a concise, bulleted list of observations. Do not provide medical advice.
-''';
+      // --- Step 1: Analyze Current Situation ---
+      statusNotifier.state = 'Analyzing current health situation...';
+      print("Step 1: Generating prompt for Current Situation");
+      final currentSituationPrompt =
+          HtmlReportGenerator.generateCurrentSituationPrompt(
+            latestRecordDataString,
+          );
 
-      // 5. Call the Trend Analysis Service
-      analysisNotifier.state = 'Sending data to AI for trend analysis...';
-      final String? result = await trendAnalysisService.performTrendAnalysis(
-        consolidatedData,
-        analysisPrompt,
+      print("Step 1: Sending request to AI for Current Situation");
+      final String?
+      currentSituationResult = await trendAnalysisService.performTrendAnalysis(
+        latestRecordDataString, // Pass only latest data for context if needed by service
+        currentSituationPrompt, // Pass the specific prompt
         (step) {
-          // Update UI with detailed steps from the service
           if (mounted) {
-            analysisNotifier.state = 'AI Analysis Step: $step';
-            print('Trend Analysis Progress: $step');
+            statusNotifier.state = 'AI Analysis (Current Situation): $step';
           }
+          print('Trend Analysis Progress (Current Situation): $step');
         },
       );
 
-      // 6. Handle Result
-      if (result != null && !result.startsWith('Error:')) {
-        analysisNotifier.state = result; // Display the AI's analysis
-        _showSnackBar('Trend analysis completed successfully.');
-        if (kDebugMode) {
-          print("--- Trend Analysis Result ---");
-          print(result);
-          print("--- End Trend Analysis Result ---");
+      if (currentSituationResult == null ||
+          currentSituationResult.startsWith('Error:')) {
+        statusNotifier.state =
+            currentSituationResult ??
+            'Error: Failed to analyze current situation.';
+        _showSnackBar(
+          currentSituationResult ?? 'Failed to analyze current situation.',
+          isError: true,
+        );
+        // Optionally return or handle error differently
+        return; // Stop further processing if the first step fails
+      }
+      print("Step 1: Received result for Current Situation");
+
+      // --- Step 2: Analyze Trends ---
+      statusNotifier.state = 'Analyzing historical trends...';
+      print("Step 2: Generating prompt for Trends");
+      final trendsPrompt = HtmlReportGenerator.generateTrendsPrompt(
+        consolidatedData, // Use all data for trends
+      );
+
+      print("Step 2: Sending request to AI for Trends");
+      final String? trendsResult = await trendAnalysisService
+          .performTrendAnalysis(
+            consolidatedData, // Pass all data for context if needed by service
+            trendsPrompt, // Pass the specific prompt
+            (step) {
+              if (mounted) {
+                statusNotifier.state = 'AI Analysis (Trends): $step';
+              }
+              print('Trend Analysis Progress (Trends): $step');
+            },
+          );
+
+      if (trendsResult == null || trendsResult.startsWith('Error:')) {
+        statusNotifier.state =
+            trendsResult ?? 'Error: Failed to analyze trends.';
+        _showSnackBar(
+          trendsResult ?? 'Failed to analyze trends.',
+          isError: true,
+        );
+        // Optionally save the partial result or handle error
+        return; // Stop further processing if the second step fails
+      }
+      print("Step 2: Received result for Trends");
+
+      // --- Step 3: Combine and Save Report ---
+      statusNotifier.state = 'Generating final report...';
+      print("Step 3: Combining results into final HTML");
+      final String finalHtmlContent =
+          HtmlReportGenerator.generateFullHtmlReport(
+            currentSituationResult, // Result from step 1
+            trendsResult, // Result from step 2
+          );
+
+      final String outputFileName = 'analysis.medoki.analysis.html';
+      String? savedFilePath;
+
+      try {
+        // We already got recordsPath earlier, reuse it
+        if (recordsPath != null && recordsPath.isNotEmpty) {
+          final filePath = p.join(recordsPath, outputFileName);
+          final outputFile = File(filePath);
+          await outputFile.writeAsString(finalHtmlContent);
+          savedFilePath = filePath; // Store the path if save succeeds
+          print('Analysis HTML saved to: $filePath');
+          statusNotifier.state =
+              'Analysis complete. Report saved.'; // Update status
+          _showSnackBar('Trend analysis completed successfully.');
+        } else {
+          // This case should have been caught earlier, but handle defensively
+          throw Exception('Medical records path is not available.');
         }
-      } else {
-        analysisNotifier.state = result ?? 'Error: Trend analysis failed.';
-        _showSnackBar(result ?? 'Trend analysis failed.', isError: true);
+      } catch (e) {
+        print('Error saving analysis HTML: $e');
+        statusNotifier.state = 'Error saving analysis report: $e';
+        _showSnackBar('Error saving analysis report.', isError: true);
+        // Don't update the HTML path provider if saving failed
       }
 
-      // Report any file reading errors
+      // Update the provider with the path ONLY if saving was successful
+      ref.read(analysisHtmlPathProvider.notifier).state = savedFilePath;
+
+      if (kDebugMode && savedFilePath != null) {
+        // Optionally log only parts if the full HTML is too long
+        print(
+          "--- Trend Analysis Combined Report Saved ---\nPath: $savedFilePath\n--- End Report ---",
+        );
+      }
+
+      // Handle file reading/parsing errors collected earlier
       if (errors.isNotEmpty) {
-        print("--- File Reading/Parsing Errors ---");
-        errors.forEach(print);
-        print("--- End File Reading/Parsing Errors ---");
-        // Optionally show a summary of these errors in the UI too
+        print(
+          "--- File Reading/Parsing Errors ---\n${errors.join('\n')}\n--- End File Reading/Parsing Errors ---",
+        );
         _showSnackBar(
           'Completed with ${errors.length} file reading errors (see console).',
           durationSeconds: 5,
@@ -720,7 +436,7 @@ Analyze the following consolidated medical record data, which includes summaries
       }
     } catch (e, stacktrace) {
       print("Error during Trend Analysis setup or execution: $e\n$stacktrace");
-      analysisNotifier.state =
+      statusNotifier.state =
           'Error: An unexpected error occurred during trend analysis: $e';
       _showSnackBar('An unexpected error occurred: $e', isError: true);
     } finally {
@@ -748,7 +464,420 @@ Analyze the following consolidated medical record data, which includes summaries
       );
     }
   }
+}
+
+// --- Extracted Private Widgets ---
+
+// --- Analysis Tab Content ---
+class _AnalysisToolbarContent extends ConsumerWidget {
+  // Changed to ConsumerWidget
+  final bool isTrendAnalysisRunning;
+  final VoidCallback onStartTrendAnalysis;
+
+  const _AnalysisToolbarContent({
+    required this.isTrendAnalysisRunning,
+    required this.onStartTrendAnalysis,
+  });
 
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Added WidgetRef ref
+    // No longer need to watch analysisHtmlPath here for enabling/disabling
+
+    return Row(
+      // mainAxisAlignment: MainAxisAlignment.start, // Removed to allow Spacer
+      children: [
+        // Start Trend Analysis Button
+        Padding(
+          padding: const EdgeInsets.only(left: 16.0),
+          child: ElevatedButton.icon(
+            onPressed: isTrendAnalysisRunning ? null : onStartTrendAnalysis,
+            icon:
+                isTrendAnalysisRunning
+                    ? Container(
+                      width: 24,
+                      height: 24,
+                      padding: const EdgeInsets.all(2.0),
+                      child: const CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 3,
+                      ),
+                    )
+                    : const Icon(Icons.science_outlined),
+            label: Text(
+              isTrendAnalysisRunning ? 'Analyzing...' : 'Start Trend Analysis',
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Theme.of(context).colorScheme.onPrimary,
+            ),
+          ),
+        ),
+        const Spacer(), // Pushes the refresh button to the right
+        // Refresh Button
+        Padding(
+          padding: const EdgeInsets.only(right: 16.0),
+          child: IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Reload Analysis Report from Disk',
+            onPressed: () async {
+              // Make onPressed async
+              final settingsService = SettingsService();
+              final recordsPath = await settingsService.getMedicalRecordsPath();
+              final statusNotifier = ref.read(
+                analysisStatusProvider.notifier,
+              ); // For potential errors
+              final htmlPathNotifier = ref.read(
+                analysisHtmlPathProvider.notifier,
+              );
+              final refreshNotifier = ref.read(
+                analysisRefreshTriggerProvider.notifier,
+              );
+
+              if (recordsPath == null || recordsPath.isEmpty) {
+                statusNotifier.state =
+                    'Error: Medical records path not set in Settings.';
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Error: Medical records path not set in Settings.',
+                      ),
+                      backgroundColor: Colors.redAccent,
+                    ),
+                  );
+                }
+                return; // Stop if path isn't set
+              }
+
+              final expectedFilePath = p.join(
+                recordsPath,
+                'analysis.medoki.analysis.html',
+              );
+
+              // Update the path provider *before* triggering refresh
+              htmlPathNotifier.state = expectedFilePath;
+
+              // Increment the trigger provider to signal a refresh in the AnalysisTabPage
+              refreshNotifier.state++;
+
+              print('Refresh requested. Attempting to load: $expectedFilePath');
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Attempting to reload analysis report...'),
+                  ),
+                );
+              }
+            }, // Button is always enabled
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// --- Medical Records Tab Content ---
+class _MedicalRecordsToolbarContent extends ConsumerWidget {
+  final SelectedFileState selectedFileState;
+  final TextEditingController searchController;
+  final FocusNode searchFocusNode;
+  final VoidCallback onAddRecord; // Keep if Add button needs it
+
+  const _MedicalRecordsToolbarContent({
+    required this.selectedFileState,
+    required this.searchController,
+    required this.searchFocusNode,
+    required this.onAddRecord,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Row(
+      children: [
+        // Left side: Controls (Add button, Filters, Search)
+        Expanded(
+          child: Row(
+            children: [
+              // Add Button
+              Padding(
+                padding: const EdgeInsets.only(left: 8.0),
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final fileService = FileService(ref);
+                    final resultMessage = await fileService.pickAndAddFiles(
+                      context,
+                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text(resultMessage)));
+                    }
+                    // onAddRecord(); // Call if still needed
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add Medical Records...'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              // Filter Chips
+              const Expanded(
+                child: _FilterChipsWidget(),
+              ), // Use extracted widget
+              const SizedBox(width: 8),
+              // Search Item
+              _SearchToolbarItem(
+                // Use extracted widget
+                searchController: searchController,
+                searchFocusNode: searchFocusNode,
+              ),
+            ],
+          ),
+        ),
+        // Divider
+        const VerticalDivider(width: 1, thickness: 1, indent: 8, endIndent: 8),
+        // Right side: Dynamic Header
+        Container(
+          width: 350, // Match sidebar width
+          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+          alignment: Alignment.center,
+          child: _DynamicSidebarHeader(
+            selectedFileState: selectedFileState,
+          ), // Use extracted widget
+        ),
+      ],
+    );
+  }
+}
+
+// --- Filter Chips Widget ---
+class _FilterChipsWidget extends ConsumerWidget {
+  const _FilterChipsWidget();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final recordsAsyncValue = ref.watch(medicalRecordsProvider);
+    final selectedYear = ref.watch(yearFilterProvider);
+    final yearNotifier = ref.read(yearFilterProvider.notifier);
+
+    return recordsAsyncValue.when(
+      data: (data) {
+        final availableYears = data.availableYears;
+        if (availableYears.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              // "All" Chip
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: FilterChip(
+                  label: const Text('All'),
+                  selected: selectedYear == null,
+                  onSelected: (selected) {
+                    if (selected) {
+                      yearNotifier.state = null;
+                    }
+                  },
+                  showCheckmark: false,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                ),
+              ),
+              // Year Chips
+              ...availableYears.map(
+                (year) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: FilterChip(
+                    label: Text(year.toString()),
+                    selected: selectedYear == year,
+                    onSelected: (selected) {
+                      yearNotifier.state = selected ? year : null;
+                    },
+                    showCheckmark: false,
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+      loading:
+          () => const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+      error:
+          (err, stack) => Tooltip(
+            message: 'Error loading year filters: $err',
+            child: const Icon(Icons.error_outline, color: Colors.red, size: 18),
+          ),
+    );
+  }
+}
+
+// --- Search Toolbar Item Widget ---
+class _SearchToolbarItem extends ConsumerStatefulWidget {
+  final TextEditingController searchController;
+  final FocusNode searchFocusNode;
+
+  const _SearchToolbarItem({
+    required this.searchController,
+    required this.searchFocusNode,
+  });
+
+  @override
+  ConsumerState<_SearchToolbarItem> createState() => _SearchToolbarItemState();
+}
+
+class _SearchToolbarItemState extends ConsumerState<_SearchToolbarItem> {
+  bool _isSearchExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 300),
+      transitionBuilder: (Widget child, Animation<double> animation) {
+        return ScaleTransition(scale: animation, child: child);
+      },
+      child:
+          _isSearchExpanded
+              ? Container(
+                key: const ValueKey('searchField'),
+                width: 250,
+                child: TextField(
+                  controller: widget.searchController,
+                  focusNode: widget.searchFocusNode,
+                  decoration: InputDecoration(
+                    hintText: 'Search files...',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20.0),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.7),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16.0,
+                      vertical: 0,
+                    ),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        widget.searchController.clear();
+                        setState(() {
+                          _isSearchExpanded = false;
+                        });
+                        widget.searchFocusNode.unfocus();
+                        ref.read(searchQueryProvider.notifier).state = '';
+                      },
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 14),
+                ),
+              )
+              : IconButton(
+                key: const ValueKey('searchIcon'),
+                icon: const Icon(Icons.search),
+                tooltip: 'Search Files',
+                onPressed: () {
+                  setState(() {
+                    _isSearchExpanded = true;
+                  });
+                  widget.searchFocusNode.requestFocus();
+                },
+              ),
+    );
+  }
+}
+
+// --- Dynamic Sidebar Header Widget ---
+class _DynamicSidebarHeader extends ConsumerWidget {
+  final SelectedFileState selectedFileState;
+
+  const _DynamicSidebarHeader({required this.selectedFileState});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selectedFilePath = selectedFileState.path;
+
+    if (selectedFilePath == null) {
+      // Default "Details" title
+      return const Center(
+        child: Text(
+          'Details',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+      );
+    } else {
+      // Header when a file is selected
+      final extractionState = ref.watch(
+        fileExtractionProvider(selectedFilePath),
+      );
+      final bool isExtracting = extractionState.isLoading;
+
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Back Button
+          IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed:
+                () => ref.read(selectedFileProvider.notifier).clearSelection(),
+            tooltip: 'Back to Details',
+            iconSize: 20.0,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+          // Title
+          const Expanded(
+            child: Text(
+              'File Information',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // Refresh Button
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed:
+                isExtracting
+                    ? null
+                    : () =>
+                        ref
+                            .read(
+                              fileExtractionProvider(selectedFilePath).notifier,
+                            )
+                            .extractData(),
+            tooltip: 'Rescan file with AI',
+            iconSize: 20.0,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            color:
+                isExtracting
+                    ? Colors.grey
+                    : Theme.of(context).colorScheme.primary,
+          ),
+        ],
+      );
+    }
+  }
 }

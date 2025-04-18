@@ -46,6 +46,8 @@ dependencies:
   dart_openai: ^5.1.0
   url_launcher: ^6.3.1
   intl: ^0.20.2
+  webview_flutter: ^4.11.0
+  webview_windows: ^0.2.0 # Add this line for Windows support
 
 dev_dependencies:
   flutter_test:

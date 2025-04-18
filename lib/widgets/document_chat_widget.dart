@@ -1,5 +1,7 @@
+import 'dart:io'; // Import for File operations
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:mediciapp/widgets/medical_records_page.dart'; // Import to access medicalRecordsProvider
 
 // Placeholder provider for chat messages (replace with actual logic later)
 final chatMessagesProvider = StateProvider<List<String>>((ref) => []);
@@ -39,10 +41,39 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
     _chatController.clear();
     ref.read(chatLoadingProvider.notifier).state = true;
 
+    // --- Get context from all .medoki.md files ---
+    String allMedokiContent =
+        "No medical documents found or error reading them."; // Default context
+    try {
+      // Use read().future outside of async gap if possible, but here it's needed
+      final recordsAsyncValue = await ref.read(medicalRecordsProvider.future);
+      final medokiFilesToRead =
+          recordsAsyncValue.items
+              .where((item) => item.hasMedoki)
+              .map((item) => File('${item.file.path}.medoki.md'))
+              .toList();
+
+      if (medokiFilesToRead.isNotEmpty) {
+        final contents = await Future.wait(
+          medokiFilesToRead.map((file) => file.readAsString()),
+        );
+        allMedokiContent = contents.join('\n\n---\n\n'); // Combine content
+      } else {
+        allMedokiContent =
+            "No relevant medical documents found to provide context.";
+      }
+    } catch (e) {
+      print("Error reading medoki files for chat context: $e");
+      // Keep the default error message for allMedokiContent
+    }
+    // ---------------------------------------------
+
     // Simulate AI response (replace with actual API call)
+    // TODO: Replace this simulation with a real call to your AI service,
+    // passing `message` and `allMedokiContent` as input.
     await Future.delayed(const Duration(seconds: 2));
     final aiResponse =
-        'AI: Responding about ${widget.selectedFilePath} to "$message"';
+        'AI: Responding to "$message" (Context based on ${allMedokiContent.length} chars)'; // Example response using context length
     final updatedMessages = ref.read(chatMessagesProvider);
     ref.read(chatMessagesProvider.notifier).state = [
       ...updatedMessages,
@@ -91,20 +122,24 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
       child: Column(
         mainAxisSize: MainAxisSize.min, // Take minimum space needed
         children: [
-          // --- Chat History (Optional, uncomment to show) ---
-          // if (messages.isNotEmpty)
-          //   SizedBox(
-          //     height: 100, // Limit height
-          //     child: ListView.builder(
-          //       controller: _scrollController,
-          //       itemCount: messages.length,
-          //       itemBuilder: (context, index) => Padding(
-          //         padding: const EdgeInsets.symmetric(vertical: 2.0),
-          //         child: Text(messages[index], style: const TextStyle(fontSize: 12)),
-          //       ),
-          //     ),
-          //   ),
-          // if (messages.isNotEmpty) const Divider(),
+          // --- Chat History ---
+          if (messages.isNotEmpty)
+            Expanded(
+              // Allow history to take available space
+              child: ListView.builder(
+                controller: _scrollController,
+                itemCount: messages.length,
+                itemBuilder:
+                    (context, index) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2.0),
+                      child: Text(
+                        messages[index],
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+              ),
+            ),
+          if (messages.isNotEmpty) const Divider(),
           // --- Chat Input Row ---
           Row(
             children: [
@@ -115,14 +150,14 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
                   decoration: InputDecoration(
                     hintText:
                         enableInput
-                            ? 'Ask about the document...'
+                            ? 'chat with your medical documents' // Changed hint text
                             : 'Select a file to chat',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(20.0),
                       borderSide: BorderSide.none,
                     ),
                     filled: true,
-                    fillColor: Colors.grey.shade200,
+                    fillColor: Colors.white, // Changed background to white
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16.0,
                       vertical: 10.0,

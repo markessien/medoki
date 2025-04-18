@@ -406,24 +406,26 @@ $transcriptionMarkdown
       // --- 7. Structure and Save JSON ---
       updateProgress("Saving results..."); // Report progress
       final medokiData = {
-        'transcription': transcriptionMarkdown.trim(),
-        'summary': summaryText.trim(),
+        // Keep original transcription for potential future use, but maybe trim it?
+        // 'original_transcription': transcriptionMarkdown?.trim(),
+        'summary': summaryText?.trim() ?? "Summary not generated.",
         'testDateUTC':
-            extractedDateString, // Add the extracted date (can be null)
+            extractedDateString, // Keep the extracted date (can be null)
         'lab_results':
-            extractedLabResults ?? [], // Add the extracted lab results
+            extractedLabResults ?? [], // Keep the extracted lab results
       };
       // Use an encoder with indentation for readability
       final jsonEncoder = JsonEncoder.withIndent('  ');
       final jsonString = jsonEncoder.convert(medokiData);
-      final medokiFilePath = '$filePath.medoki.md';
+      // Save to .medoki.json instead of .medoki.md
+      final medokiJsonFilePath = '$filePath.medoki.json';
 
       try {
-        final medokiFile = File(medokiFilePath);
+        final medokiFile = File(medokiJsonFilePath);
         await medokiFile.writeAsString(jsonString);
-        print("Successfully wrote medoki data to: $medokiFilePath");
+        print("Successfully wrote medoki JSON data to: $medokiJsonFilePath");
       } catch (e) {
-        print("Error writing .medoki.md file: $e");
+        print("Error writing .medoki.json file: $e");
         return "Error: Could not save analysis results.";
       }
 
