@@ -672,7 +672,8 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
                                     ),
                                     child: SingleChildScrollView(
                                       child: SelectableText(
-                                        medokiDataAsync.value?['transcription']
+                                        medokiDataAsync
+                                                    .value?['transcription_markdown'] // Corrected key
                                                 as String? ??
                                             'Transcription not available.',
                                         style: const TextStyle(fontSize: 12),

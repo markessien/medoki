@@ -47,7 +47,8 @@ The HTML fragment MUST:
 3. Use plain language to describe the health situation, avoiding technical jargon.
 4. Focus on a positive and informative tone, highlighting any areas of concern or improvement.
 5. Include any relevant lab values or observations that stand out.
-
+6. Where lab values are mentioned, briefly indicate if they are "normal", "elevated", or "low", and optionally include how far from the normal range they are.
+7. Optionally add a short one-line summary with traffic light color class hints: e.g., `<span class="health-flag green">Mostly Normal</span>`.
 
 Latest Record Data:
 ---
@@ -74,6 +75,8 @@ The HTML fragment MUST:
 5. Focus on a positive and informative tone, highlighting any areas of concern or improvement.
 6. Include any relevant lab values or observations that stand out.
 7. Highlight any significant changes or trends compared to previous years.
+8. Each list item should begin with the year and a health status tag, like: `<li><strong>2012:</strong> <span class="status yellow">Elevated liver enzymes</span> …</li>`.
+9. Identify major life events (hospitalizations, infections, significant changes) clearly to support visual timeline rendering later.
 
 Consolidated Data (All Records):
 ---
@@ -97,6 +100,9 @@ The HTML fragment MUST:
 1. Start with an `<h2>` tag containing "Detailed Observations (Trends)".
 2. Be followed by an unordered list (`<ul>`) detailing observations.
 3. Each list item (`<li>`) should describe a specific trend, pattern, or significant change observed across the records (e.g., changes in specific lab values over time, recurring themes in summaries, comparison of recent results to older ones). Focus on changes relative to reference ranges.
+4. Where possible, list years or dates associated with each trend to allow future timeline or line chart generation.
+5. Indicate if values are improving, stable, or worsening over time.
+6. Use phrases like "Consistently elevated", "Fluctuating", "Gradually increasing", etc., to help build a visual narrative.
 
 Consolidated Data (All Records):
 ---
@@ -107,20 +113,46 @@ Remember: Generate ONLY the HTML fragment for this section (starting with `<h2>`
 ''';
   }
 
+  /// Generates the prompt for the "Organ Health Observations" section.
+  static String generateOrgansPrompt(String allConsolidatedData) {
+    return '''
+$_baseInstructions
+
+Task: Analyze ALL the consolidated medical records provided below and generate an HTML fragment summarizing key observations about major organs.
+
+The HTML fragment MUST:
+1. Start with an `<h2>` tag containing "Organ Health Observations".
+2. Be followed by an unordered list (`<ul>`).
+3. Each list item (`<li>`) should represent a major organ (e.g., Heart, Lungs, Liver, Kidneys, Brain, Skin, Eyes).
+4. For each organ, provide a brief summary of relevant findings, observations, or mentions from the records. Focus on objective data like test results, imaging findings, or specific diagnoses mentioned. If no relevant information is found for an organ, state "No specific observations noted in the provided records."
+5. Use plain language suitable for a layperson.
+6. Start each list item with a color-coded health flag if applicable, e.g., `<li><strong>Liver:</strong> <span class="organ-flag red">Impaired</span> …</li>`
+
+Consolidated Data (All Records):
+---
+$allConsolidatedData
+---
+
+Example list item format: `<li>Heart: ECG normal in 2021. Occasional mentions of palpitations in 2023 notes.</li>`
+
+Remember: Generate ONLY the HTML fragment for this section (starting with `<h2>`).
+''';
+  }
+
   // --- HTML Assembly Method ---
 
   /// Assembles the final HTML report from the generated fragments.
   static String generateFullHtmlReport(
     String currentSituationHtml,
-    String yearlySummariesHtml, // Added yearly summaries parameter
+    String yearlySummariesHtml,
     String trendsHtml,
+    String organsHtml, // Added organs parameter
   ) {
     // Basic validation/fallback for fragments
     final situationContent =
         (currentSituationHtml.isNotEmpty)
             ? currentSituationHtml
             : '<h2>Current Health Situation</h2><p>Error: Analysis data not generated.</p>';
-    // Added fallback for yearly summaries
     final yearlySummariesContent =
         (yearlySummariesHtml.isNotEmpty)
             ? yearlySummariesHtml
@@ -129,6 +161,10 @@ Remember: Generate ONLY the HTML fragment for this section (starting with `<h2>`
         (trendsHtml.isNotEmpty)
             ? trendsHtml
             : '<h2>Detailed Observations (Trends)</h2><p>Error: Analysis data not generated.</p>';
+    final organsContent =
+        (organsHtml.isNotEmpty)
+            ? organsHtml
+            : '<h2>Organ Health Observations</h2><p>Error: Analysis data not generated.</p>';
 
     return '''
 <!DOCTYPE html>
@@ -154,6 +190,10 @@ $_cssStyles
 
     <div class="report-section">
       $trendsContent
+    </div>
+
+    <div class="report-section">
+      $organsContent
     </div>
 
 </body>

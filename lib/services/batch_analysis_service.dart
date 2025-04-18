@@ -29,7 +29,6 @@ class BatchAnalysisService {
     onProgress?.call('Starting batch analysis...');
 
     // 1. Get base path from settings
-    // 1. Get base path from settings
     final basePath = await _settingsService.getMedicalRecordsPath();
 
     if (basePath == null || basePath.isEmpty) {
@@ -57,9 +56,8 @@ class BatchAnalysisService {
     }
 
     final List<File> filesToProcess = [];
-    final Set<String> existingMedokiFiles = {};
 
-    // Helper to check supported extensions (copied from AppToolbar for now)
+    // Helper to check supported extensions
     bool isSupported(String path) {
       final ext = p.extension(path).toLowerCase();
       return [
@@ -68,45 +66,32 @@ class BatchAnalysisService {
       ].contains(ext);
     }
 
+    // Iterate through all entities and add supported files to the list
     for (final entity in allEntities) {
-      if (entity is File) {
-        // Check if the file is a .medoki.json file inside a 'data-files' directory
-        if (entity is File &&
-            p.basename(p.dirname(entity.path)) == 'data-files' &&
-            entity.path.endsWith('.medoki.json')) {
-          // Reconstruct the path of the original file
-          final medokiFileName = p.basename(entity.path);
-          final originalFileName = medokiFileName.replaceAll(
-            '.medoki.json',
-            '',
-          );
-          final dataFilesDir = p.dirname(entity.path);
-          final originalFileDir = p.dirname(dataFilesDir); // Go up one level
-          final originalFilePath = p.join(originalFileDir, originalFileName);
-          existingMedokiFiles.add(originalFilePath);
-        } else if (isSupported(entity.path)) {
-          filesToProcess.add(entity);
-        }
+      // Skip files/directories within any 'trash' folder
+      if (p.split(entity.path).contains('trash')) {
+        continue;
       }
-    }
 
-    // Filter out files that already have a .medoki.json file
-    final filesRequiringAnalysis =
-        filesToProcess
-            .where((file) => !existingMedokiFiles.contains(file.path))
-            .toList();
+      // Only add supported files
+      if (entity is File && isSupported(entity.path)) {
+        filesToProcess.add(entity);
+      }
+    } // Correct closing brace for the entity loop
 
-    final totalFiles = filesRequiringAnalysis.length;
+    // Now process all supported files found
+    final totalFiles = filesToProcess.length;
     if (totalFiles == 0) {
-      onProgress?.call('No new files found requiring analysis.');
+      // Update message slightly as we are not checking for "new" files anymore
+      onProgress?.call('No supported files found to analyze.');
       return;
     }
 
     onProgress?.call('Found $totalFiles files to analyze.');
 
-    // 3. Iterate and process
+    // 3. Iterate and process the filtered files
     int processedCount = 0;
-    for (final file in filesRequiringAnalysis) {
+    for (final file in filesToProcess) {
       processedCount++;
       final progressMessage =
           'Analyzing file $processedCount of $totalFiles: ${p.basename(file.path)}';
@@ -114,11 +99,9 @@ class BatchAnalysisService {
       print(progressMessage); // Also log to console
 
       try {
-        // Provide a dummy callback for batch processing as detailed steps aren't shown here
+        // Provide a dummy callback for batch processing
         final result = await _aiService.extractDataFromFile(file.path, (step) {
-          // Use the stored _aiService instance
-          // Batch progress callback - currently does nothing, but could log if needed
-          // print("Batch step for ${file.path}: $step");
+          // Batch progress callback - currently does nothing
         });
         if (result != null && result.startsWith('Error:')) {
           // Log specific file error but continue batch
@@ -137,13 +120,13 @@ class BatchAnalysisService {
       }
       // Optional: Add a small delay between API calls if needed
       // await Future.delayed(const Duration(seconds: 1));
-    }
+    } // Correct closing brace for the processing loop
 
     onProgress?.call(
       'Batch analysis completed. Processed $processedCount files.',
     );
-  }
-}
+  } // Correct closing brace for runBatchAnalysis method
+} // Correct closing brace for BatchAnalysisService class
 
 /// Provider for BatchAnalysisService
 final batchAnalysisServiceProvider = Provider<BatchAnalysisService>((ref) {

@@ -167,9 +167,11 @@ class AIService {
         return "Error during Transcription ($selectedModel): $e";
       }
 
-      if (transcriptionMarkdown == null || transcriptionMarkdown.isEmpty) {
-        print("Transcription result was empty.");
-        return "Error: Transcription failed to produce text.";
+      // Check if transcription is null, empty, or just whitespace
+      if (transcriptionMarkdown == null ||
+          transcriptionMarkdown.trim().isEmpty) {
+        print("Transcription result was null, empty, or only whitespace.");
+        return "Error: Transcription failed to produce valid text.";
       }
       print("Transcription completed for: $filePath");
 
@@ -284,7 +286,7 @@ Transcription:
 $transcriptionMarkdown
 ```
 ''';
-        List<Map<String, dynamic>>? extractedLabResults;
+        // Removed redundant declaration of extractedLabResults
 
         try {
           String? rawLabResultString;
@@ -374,7 +376,7 @@ $transcriptionMarkdown
         // Updated prompt to ask for ISO 8601 UTC date
         final dateExtractionPrompt =
             'From the following medical record transcription, extract the exact date when the test, procedure, or visit occurred. If multiple dates are present, use the primary date of the event described. Format the date as an ISO 8601 UTC string (YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD if time is unknown, defaulting time to 00:00:00Z). If no specific date can be found, return the string "null".\n\nTranscription:\n```markdown\n$transcriptionMarkdown\n```';
-        String? extractedDateString;
+        // Removed redundant declaration of extractedDateString
 
         try {
           switch (selectedModel) {
@@ -446,7 +448,7 @@ $transcriptionMarkdown
         print("Starting Summarization for: $filePath");
         final summarizationPrompt =
             'Provide a concise summary (1-3 sentences) of the key information in the following medical record transcription:\n\n```markdown\n$transcriptionMarkdown\n```';
-        String? summaryText;
+        // Removed redundant declaration of summaryText
 
         try {
           switch (selectedModel) {
@@ -492,7 +494,18 @@ $transcriptionMarkdown
           return "Error: Summarization failed to produce text.";
         }
         print("Summarization completed for: $filePath");
-        finalStatusMessage = summaryText?.trim() ?? "Summary not generated.";
+
+        // *** Add check for empty summary if medical ***
+        if (summaryText == null || summaryText.trim().isEmpty) {
+          print(
+            "Error: Summarization failed to produce text for medical document.",
+          );
+          statusNotifier.setStatus(filePath, ProcessingStatus.failed);
+          _ref.refresh(medicalRecordsProvider);
+          return "Error: Summarization failed to produce text."; // Return error before saving
+        }
+        finalStatusMessage =
+            summaryText.trim(); // Already checked it's not null/empty
       } else {
         // Document is not medical
         updateProgress("Skipping medical extraction (not a medical doc)...");
@@ -518,7 +531,8 @@ $transcriptionMarkdown
           'testDateUTC': extractedDateString,
           'lab_results': extractedLabResults ?? [],
           // Optionally include transcription if needed later
-          // 'transcription_markdown': transcriptionMarkdown?.trim(),
+          'transcription_markdown':
+              transcriptionMarkdown?.trim(), // Uncommented this line
         };
         outputFileName = '$originalFileName.medoki.json';
       } else {

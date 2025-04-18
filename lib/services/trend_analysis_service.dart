@@ -326,14 +326,35 @@ Historical Data:
       }
       print("Step 3: Received result for Trends");
 
-      // --- Step 4: Combine and Save Report ---
+      // --- Step 4: Analyze Organ Health ---
+      onProgress('Analyzing organ health observations...');
+      print("Step 4: Generating prompt for Organ Health");
+      final organsPrompt = HtmlReportGenerator.generateOrgansPrompt(
+        consolidatedData,
+      );
+
+      print("Step 4: Sending request to AI for Organ Health");
+      final String? organsResult = await performTrendAnalysis(
+        consolidatedData,
+        organsPrompt,
+        (step) => onProgress('AI Analysis (Organ Health): $step'),
+      );
+
+      if (organsResult == null || organsResult.startsWith('Error:')) {
+        onError(organsResult ?? 'Error: Failed to analyze organ health.');
+        return; // Stop further processing
+      }
+      print("Step 4: Received result for Organ Health");
+
+      // --- Step 5: Combine and Save Report ---
       onProgress('Generating final report...');
-      print("Step 4: Combining results into final HTML");
+      print("Step 5: Combining results into final HTML");
       final String finalHtmlContent =
           HtmlReportGenerator.generateFullHtmlReport(
             currentSituationResult,
             yearlySummariesResult,
             trendsResult,
+            organsResult, // Added organs result
           );
 
       final String outputFileName = 'analysis.medoki.analysis.html';

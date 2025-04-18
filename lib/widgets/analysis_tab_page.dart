@@ -60,6 +60,7 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
     if (recordsPath != null && recordsPath.isNotEmpty) {
       final expectedFilePath = p.join(
         recordsPath,
+        'data-files', // Correctly look inside the data-files subdirectory
         'analysis.medoki.analysis.html',
       );
       // Simpler: just set the path, let WebView try to load it.
