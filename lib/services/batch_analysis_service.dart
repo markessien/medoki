@@ -70,15 +70,27 @@ class BatchAnalysisService {
 
     for (final entity in allEntities) {
       if (entity is File) {
-        if (entity.path.endsWith('.medoki.md')) {
-          existingMedokiFiles.add(entity.path.replaceAll('.medoki.md', ''));
+        // Check if the file is a .medoki.json file inside a 'data-files' directory
+        if (entity is File &&
+            p.basename(p.dirname(entity.path)) == 'data-files' &&
+            entity.path.endsWith('.medoki.json')) {
+          // Reconstruct the path of the original file
+          final medokiFileName = p.basename(entity.path);
+          final originalFileName = medokiFileName.replaceAll(
+            '.medoki.json',
+            '',
+          );
+          final dataFilesDir = p.dirname(entity.path);
+          final originalFileDir = p.dirname(dataFilesDir); // Go up one level
+          final originalFilePath = p.join(originalFileDir, originalFileName);
+          existingMedokiFiles.add(originalFilePath);
         } else if (isSupported(entity.path)) {
           filesToProcess.add(entity);
         }
       }
     }
 
-    // Filter out files that already have a .medoki.md file
+    // Filter out files that already have a .medoki.json file
     final filesRequiringAnalysis =
         filesToProcess
             .where((file) => !existingMedokiFiles.contains(file.path))

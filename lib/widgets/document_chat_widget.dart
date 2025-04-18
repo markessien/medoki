@@ -2,6 +2,7 @@ import 'dart:io'; // Import for File operations
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mediciapp/widgets/medical_records_page.dart'; // Import to access medicalRecordsProvider
+import 'package:path/path.dart' as p; // Import path package
 
 // Placeholder provider for chat messages (replace with actual logic later)
 final chatMessagesProvider = StateProvider<List<String>>((ref) => []);
@@ -41,17 +42,24 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
     _chatController.clear();
     ref.read(chatLoadingProvider.notifier).state = true;
 
-    // --- Get context from all .medoki.md files ---
+    // --- Get context from all .medoki.json files ---
     String allMedokiContent =
         "No medical documents found or error reading them."; // Default context
     try {
       // Use read().future outside of async gap if possible, but here it's needed
       final recordsAsyncValue = await ref.read(medicalRecordsProvider.future);
       final medokiFilesToRead =
-          recordsAsyncValue.items
-              .where((item) => item.hasMedoki)
-              .map((item) => File('${item.file.path}.medoki.md'))
-              .toList();
+          recordsAsyncValue.items.where((item) => item.hasMedoki).map((item) {
+            // Construct path within the data-files subdirectory
+            final originalFileDir = p.dirname(item.file.path);
+            final originalFileName = p.basename(item.file.path);
+            final dataFilesDir = p.join(originalFileDir, 'data-files');
+            final medokiPath = p.join(
+              dataFilesDir,
+              '$originalFileName.medoki.json',
+            );
+            return File(medokiPath);
+          }).toList();
 
       if (medokiFilesToRead.isNotEmpty) {
         final contents = await Future.wait(

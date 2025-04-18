@@ -173,10 +173,100 @@ class AIService {
       }
       print("Transcription completed for: $filePath");
 
-      // --- 4. Step 2: Lab Result Extraction ---
-      updateProgress("Extracting lab results..."); // Report progress
-      print("Starting Lab Result Extraction for: $filePath");
-      final labExtractionPrompt = '''
+      // --- 4. Step 2: Classification (Is it Medical?) ---
+      updateProgress("Classifying document type...");
+      print("Starting Document Classification for: $filePath");
+      final classificationPrompt = '''
+Analyze the following transcription. Determine if it primarily contains medical information (e.g., lab results, doctor's notes, prescriptions, medical history, symptoms, diagnosis, treatment plans).
+
+Respond with a JSON object containing a single key "is_medical" with a boolean value (true or false). Example: {"is_medical": true}
+
+Transcription:
+```markdown
+$transcriptionMarkdown
+```
+''';
+      bool isMedical = false; // Default to false
+
+      try {
+        String? rawClassificationResult;
+        switch (selectedModel) {
+          case AiModelType.gemini:
+            final geminiModel = google_ai.GenerativeModel(
+              model: 'gemini-2.0-flash',
+              apiKey: apiKey!,
+              generationConfig: google_ai.GenerationConfig(
+                responseMimeType: "application/json", // Request JSON output
+              ),
+            );
+            final content = [google_ai.Content.text(classificationPrompt)];
+            final response = await geminiModel.generateContent(content);
+            rawClassificationResult = response.text?.trim();
+            break;
+          case AiModelType.openai:
+            final chatCompletion = await OpenAI.instance.chat.create(
+              model: "gpt-4o", // Or a cheaper model like gpt-3.5-turbo
+              responseFormat: {"type": "json_object"}, // Request JSON output
+              messages: [
+                OpenAIChatCompletionChoiceMessageModel(
+                  role: OpenAIChatMessageRole.user,
+                  content: [
+                    OpenAIChatCompletionChoiceMessageContentItemModel.text(
+                      classificationPrompt,
+                    ),
+                  ],
+                ),
+              ],
+            );
+            rawClassificationResult =
+                chatCompletion.choices.first.message.content?.first.text
+                    ?.trim();
+            break;
+          case AiModelType.medoki:
+            // Placeholder: Assume medical for testing, or add logic
+            rawClassificationResult = '{"is_medical": true}';
+            break;
+        }
+
+        if (rawClassificationResult != null &&
+            rawClassificationResult.isNotEmpty) {
+          try {
+            final decodedJson = jsonDecode(rawClassificationResult);
+            if (decodedJson is Map<String, dynamic> &&
+                decodedJson.containsKey('is_medical') &&
+                decodedJson['is_medical'] is bool) {
+              isMedical = decodedJson['is_medical'];
+            } else {
+              print(
+                "Warning: Classification returned invalid JSON structure: $rawClassificationResult",
+              );
+              // Decide how to handle - assume not medical? Or try a fallback?
+              // For now, stick with the default 'false'.
+            }
+          } catch (e) {
+            print(
+              "Error decoding classification JSON ($selectedModel): $e. Raw: $rawClassificationResult",
+            );
+          }
+        }
+      } catch (e) {
+        print("Error during Classification ($selectedModel): $e");
+        // Decide how to handle - assume not medical? Or fail?
+        // For now, stick with the default 'false' and log the error.
+      }
+      print("Classification completed for: $filePath. Is Medical: $isMedical");
+
+      // --- Conditional Extraction based on Classification ---
+      List<Map<String, dynamic>>? extractedLabResults;
+      String? extractedDateString;
+      String? summaryText;
+      String finalStatusMessage = "Processing completed."; // Default message
+
+      if (isMedical) {
+        // --- 5. Step 3: Lab Result Extraction (if medical) ---
+        updateProgress("Extracting lab results..."); // Report progress
+        print("Starting Lab Result Extraction for: $filePath");
+        final labExtractionPrompt = '''
 Analyze the following medical record transcription. If it contains laboratory test results, extract each result into a JSON object with the following keys: "test_name", "value", "units", "reference_range".
 
 Return the results as a JSON array of these objects.
@@ -194,248 +284,286 @@ Transcription:
 $transcriptionMarkdown
 ```
 ''';
-      List<Map<String, dynamic>>? extractedLabResults;
+        List<Map<String, dynamic>>? extractedLabResults;
 
-      try {
-        String? rawLabResultString;
-        switch (selectedModel) {
-          case AiModelType.gemini:
-            final geminiModel = google_ai.GenerativeModel(
-              model: 'gemini-2.0-flash', // Or a model suitable for text tasks
-              apiKey: apiKey!,
-            );
-            final content = [google_ai.Content.text(labExtractionPrompt)];
-            final response = await geminiModel.generateContent(content);
-            rawLabResultString = response.text?.trim();
-            break;
-          case AiModelType.openai:
-            final chatCompletion = await OpenAI.instance.chat.create(
-              model: "gpt-4o", // Or a cheaper text model
-              responseFormat: {"type": "json_object"}, // Request JSON output
-              messages: [
-                OpenAIChatCompletionChoiceMessageModel(
-                  role: OpenAIChatMessageRole.user,
-                  content: [
-                    OpenAIChatCompletionChoiceMessageContentItemModel.text(
-                      labExtractionPrompt,
-                    ),
-                  ],
-                ),
-              ],
-            );
+        try {
+          String? rawLabResultString;
+          switch (selectedModel) {
+            case AiModelType.gemini:
+              final geminiModel = google_ai.GenerativeModel(
+                model: 'gemini-2.0-flash', // Or a model suitable for text tasks
+                apiKey: apiKey!,
+              );
+              final content = [google_ai.Content.text(labExtractionPrompt)];
+              final response = await geminiModel.generateContent(content);
+              rawLabResultString = response.text?.trim();
+              break;
+            case AiModelType.openai:
+              final chatCompletion = await OpenAI.instance.chat.create(
+                model: "gpt-4o", // Or a cheaper text model
+                responseFormat: {"type": "json_object"}, // Request JSON output
+                messages: [
+                  OpenAIChatCompletionChoiceMessageModel(
+                    role: OpenAIChatMessageRole.user,
+                    content: [
+                      OpenAIChatCompletionChoiceMessageContentItemModel.text(
+                        labExtractionPrompt,
+                      ),
+                    ],
+                  ),
+                ],
+              );
+              rawLabResultString =
+                  chatCompletion.choices.first.message.content?.first.text
+                      ?.trim();
+              break;
+            case AiModelType.medoki:
+              // Placeholder for Medoki AI lab extraction
+              rawLabResultString = "[]"; // Default to empty array
+              break;
+          }
+
+          // Attempt to parse the JSON response
+          if (rawLabResultString != null && rawLabResultString.isNotEmpty) {
+            // Clean potential markdown code fences
+            if (rawLabResultString.startsWith('```json')) {
+              rawLabResultString = rawLabResultString.substring(7);
+            }
+            if (rawLabResultString.endsWith('```')) {
+              rawLabResultString = rawLabResultString.substring(
+                0,
+                rawLabResultString.length - 3,
+              );
+            }
             rawLabResultString =
-                chatCompletion.choices.first.message.content?.first.text
-                    ?.trim();
-            break;
-          case AiModelType.medoki:
-            // Placeholder for Medoki AI lab extraction
-            rawLabResultString = "[]"; // Default to empty array
-            break;
+                rawLabResultString.trim(); // Trim again after removing fences
+
+            try {
+              final decodedJson = jsonDecode(rawLabResultString);
+              if (decodedJson is List) {
+                // Validate structure (basic check)
+                extractedLabResults =
+                    decodedJson.whereType<Map<String, dynamic>>().toList();
+                // Optional: Add deeper validation per item schema here
+              } else {
+                print(
+                  "Warning: Lab result extraction returned valid JSON, but it wasn't a List: ${rawLabResultString}",
+                );
+                extractedLabResults = []; // Treat as no results if not a list
+              }
+            } catch (e) {
+              print(
+                "Error decoding lab results JSON ($selectedModel): $e. Raw response: ${rawLabResultString}",
+              );
+              extractedLabResults = []; // Treat as no results on decode error
+            }
+          } else {
+            extractedLabResults = []; // Treat empty/null response as no results
+          }
+        } catch (e) {
+          print("Error during Lab Result Extraction ($selectedModel): $e");
+          extractedLabResults = []; // Default to empty list on error
+        }
+        print(
+          "Lab Result Extraction completed for: $filePath. Found ${extractedLabResults?.length ?? 0} results.",
+        );
+
+        // --- 6. Step 4: Date Extraction (if medical) ---
+        updateProgress("Extracting date..."); // Report progress
+        print("Starting Date Extraction for: $filePath");
+        // Updated prompt to ask for ISO 8601 UTC date
+        final dateExtractionPrompt =
+            'From the following medical record transcription, extract the exact date when the test, procedure, or visit occurred. If multiple dates are present, use the primary date of the event described. Format the date as an ISO 8601 UTC string (YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD if time is unknown, defaulting time to 00:00:00Z). If no specific date can be found, return the string "null".\n\nTranscription:\n```markdown\n$transcriptionMarkdown\n```';
+        String? extractedDateString;
+
+        try {
+          switch (selectedModel) {
+            case AiModelType.gemini:
+              final geminiModel = google_ai.GenerativeModel(
+                model: 'gemini-2.0-flash', // Or a model suitable for text tasks
+                apiKey: apiKey!,
+              );
+              final content = [google_ai.Content.text(dateExtractionPrompt)];
+              final response = await geminiModel.generateContent(content);
+              extractedDateString = response.text?.trim();
+              break;
+            case AiModelType.openai:
+              final chatCompletion = await OpenAI.instance.chat.create(
+                model: "gpt-4o", // Or a cheaper text model
+                messages: [
+                  OpenAIChatCompletionChoiceMessageModel(
+                    role: OpenAIChatMessageRole.user,
+                    content: [
+                      OpenAIChatCompletionChoiceMessageContentItemModel.text(
+                        dateExtractionPrompt,
+                      ),
+                    ],
+                  ),
+                ],
+                // Optional: Add temperature or other parameters if needed
+              );
+              extractedDateString =
+                  chatCompletion.choices.first.message.content?.first.text
+                      ?.trim();
+              break;
+            case AiModelType.medoki:
+              // Placeholder for Medoki AI date extraction
+              extractedDateString = "null"; // Default to null if not found
+              break;
+          }
+        } catch (e) {
+          print("Error during Date Extraction ($selectedModel): $e");
+          // Decide if we should proceed without a date or fail
+          // For now, let's proceed but log the error. The date will be null.
+          extractedDateString = "null";
         }
 
-        // Attempt to parse the JSON response
-        if (rawLabResultString != null && rawLabResultString.isNotEmpty) {
-          // Clean potential markdown code fences
-          if (rawLabResultString.startsWith('```json')) {
-            rawLabResultString = rawLabResultString.substring(7);
-          }
-          if (rawLabResultString.endsWith('```')) {
-            rawLabResultString = rawLabResultString.substring(
-              0,
-              rawLabResultString.length - 3,
-            );
-          }
-          rawLabResultString =
-              rawLabResultString.trim(); // Trim again after removing fences
-
+        // Validate or clean the extracted date string
+        if (extractedDateString == null ||
+            extractedDateString.toLowerCase() == 'null' ||
+            extractedDateString.isEmpty) {
+          extractedDateString =
+              null; // Store actual null if AI indicates none found
+        } else {
+          // Optional: Add more robust validation/parsing here if needed
+          // For example, try DateTime.parseISO8601(extractedDateString) in a try-catch
+          // to ensure it's a valid format before storing.
           try {
-            final decodedJson = jsonDecode(rawLabResultString);
-            if (decodedJson is List) {
-              // Validate structure (basic check)
-              extractedLabResults =
-                  decodedJson.whereType<Map<String, dynamic>>().toList();
-              // Optional: Add deeper validation per item schema here
-            } else {
-              print(
-                "Warning: Lab result extraction returned valid JSON, but it wasn't a List: ${rawLabResultString}",
-              );
-              extractedLabResults = []; // Treat as no results if not a list
-            }
+            // Attempt parsing to validate format (optional but recommended)
+            DateTime.parse(extractedDateString);
+            print("Extracted Date (Raw): $extractedDateString");
           } catch (e) {
             print(
-              "Error decoding lab results JSON ($selectedModel): $e. Raw response: ${rawLabResultString}",
+              "Warning: AI returned a date string '$extractedDateString' that couldn't be parsed as ISO 8601 UTC. Storing as null.",
             );
-            extractedLabResults = []; // Treat as no results on decode error
+            extractedDateString = null; // Store null if format is invalid
           }
-        } else {
-          extractedLabResults = []; // Treat empty/null response as no results
         }
-      } catch (e) {
-        print("Error during Lab Result Extraction ($selectedModel): $e");
-        extractedLabResults = []; // Default to empty list on error
-      }
-      print(
-        "Lab Result Extraction completed for: $filePath. Found ${extractedLabResults?.length ?? 0} results.",
-      );
+        print("Date Extraction completed for: $filePath");
 
-      // --- 5. Step 3: Date Extraction ---
-      updateProgress("Extracting date..."); // Report progress
-      print("Starting Date Extraction for: $filePath");
-      // Updated prompt to ask for ISO 8601 UTC date
-      final dateExtractionPrompt =
-          'From the following medical record transcription, extract the exact date when the test, procedure, or visit occurred. If multiple dates are present, use the primary date of the event described. Format the date as an ISO 8601 UTC string (YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD if time is unknown, defaulting time to 00:00:00Z). If no specific date can be found, return the string "null".\n\nTranscription:\n```markdown\n$transcriptionMarkdown\n```';
-      String? extractedDateString;
+        // --- 7. Step 5: Summarization (if medical) ---
+        updateProgress("Summarizing content..."); // Report progress
+        print("Starting Summarization for: $filePath");
+        final summarizationPrompt =
+            'Provide a concise summary (1-3 sentences) of the key information in the following medical record transcription:\n\n```markdown\n$transcriptionMarkdown\n```';
+        String? summaryText;
 
-      try {
-        switch (selectedModel) {
-          case AiModelType.gemini:
-            final geminiModel = google_ai.GenerativeModel(
-              model: 'gemini-2.0-flash', // Or a model suitable for text tasks
-              apiKey: apiKey!,
-            );
-            final content = [google_ai.Content.text(dateExtractionPrompt)];
-            final response = await geminiModel.generateContent(content);
-            extractedDateString = response.text?.trim();
-            break;
-          case AiModelType.openai:
-            final chatCompletion = await OpenAI.instance.chat.create(
-              model: "gpt-4o", // Or a cheaper text model
-              messages: [
-                OpenAIChatCompletionChoiceMessageModel(
-                  role: OpenAIChatMessageRole.user,
-                  content: [
-                    OpenAIChatCompletionChoiceMessageContentItemModel.text(
-                      dateExtractionPrompt,
-                    ),
-                  ],
-                ),
-              ],
-              // Optional: Add temperature or other parameters if needed
-            );
-            extractedDateString =
-                chatCompletion.choices.first.message.content?.first.text
-                    ?.trim();
-            break;
-          case AiModelType.medoki:
-            // Placeholder for Medoki AI date extraction
-            extractedDateString = "null"; // Default to null if not found
-            break;
-        }
-      } catch (e) {
-        print("Error during Date Extraction ($selectedModel): $e");
-        // Decide if we should proceed without a date or fail
-        // For now, let's proceed but log the error. The date will be null.
-        extractedDateString = "null";
-      }
-
-      // Validate or clean the extracted date string
-      if (extractedDateString == null ||
-          extractedDateString.toLowerCase() == 'null' ||
-          extractedDateString.isEmpty) {
-        extractedDateString =
-            null; // Store actual null if AI indicates none found
-      } else {
-        // Optional: Add more robust validation/parsing here if needed
-        // For example, try DateTime.parseISO8601(extractedDateString) in a try-catch
-        // to ensure it's a valid format before storing.
         try {
-          // Attempt parsing to validate format (optional but recommended)
-          DateTime.parse(extractedDateString);
-          print("Extracted Date (Raw): $extractedDateString");
+          switch (selectedModel) {
+            case AiModelType.gemini:
+              final geminiModel = google_ai.GenerativeModel(
+                model:
+                    'gemini-2.0-flash', // Can use the same or a different text model
+                apiKey: apiKey!,
+              );
+              final content = [google_ai.Content.text(summarizationPrompt)];
+              final response = await geminiModel.generateContent(content);
+              summaryText = response.text;
+              break;
+            case AiModelType.openai:
+              final chatCompletion = await OpenAI.instance.chat.create(
+                model: "gpt-4o", // Or a cheaper text model like gpt-3.5-turbo
+                messages: [
+                  OpenAIChatCompletionChoiceMessageModel(
+                    role: OpenAIChatMessageRole.user,
+                    content: [
+                      OpenAIChatCompletionChoiceMessageContentItemModel.text(
+                        summarizationPrompt,
+                      ),
+                    ],
+                  ),
+                ],
+              );
+              summaryText =
+                  chatCompletion.choices.first.message.content?.first.text;
+              break;
+            case AiModelType.medoki:
+              summaryText = "This is a placeholder summary from Medoki AI.";
+              break;
+          }
         } catch (e) {
-          print(
-            "Warning: AI returned a date string '$extractedDateString' that couldn't be parsed as ISO 8601 UTC. Storing as null.",
-          );
-          extractedDateString = null; // Store null if format is invalid
+          print("Error during Summarization ($selectedModel): $e");
+          // Decide if we should still save the transcription or fail completely
+          return "Error during Summarization ($selectedModel): $e";
         }
-      }
-      print("Date Extraction completed for: $filePath");
 
-      // --- 6. Step 4: Summarization ---
-      updateProgress("Summarizing content..."); // Report progress
-      print("Starting Summarization for: $filePath");
-      final summarizationPrompt =
-          'Provide a concise summary (1-3 sentences) of the key information in the following medical record transcription:\n\n```markdown\n$transcriptionMarkdown\n```';
-      String? summaryText;
-
-      try {
-        switch (selectedModel) {
-          case AiModelType.gemini:
-            final geminiModel = google_ai.GenerativeModel(
-              model:
-                  'gemini-2.0-flash', // Can use the same or a different text model
-              apiKey: apiKey!,
-            );
-            final content = [google_ai.Content.text(summarizationPrompt)];
-            final response = await geminiModel.generateContent(content);
-            summaryText = response.text;
-            break;
-          case AiModelType.openai:
-            final chatCompletion = await OpenAI.instance.chat.create(
-              model: "gpt-4o", // Or a cheaper text model like gpt-3.5-turbo
-              messages: [
-                OpenAIChatCompletionChoiceMessageModel(
-                  role: OpenAIChatMessageRole.user,
-                  content: [
-                    OpenAIChatCompletionChoiceMessageContentItemModel.text(
-                      summarizationPrompt,
-                    ),
-                  ],
-                ),
-              ],
-            );
-            summaryText =
-                chatCompletion.choices.first.message.content?.first.text;
-            break;
-          case AiModelType.medoki:
-            summaryText = "This is a placeholder summary from Medoki AI.";
-            break;
+        if (summaryText == null || summaryText.isEmpty) {
+          print("Summarization result was empty.");
+          return "Error: Summarization failed to produce text.";
         }
-      } catch (e) {
-        print("Error during Summarization ($selectedModel): $e");
-        // Decide if we should still save the transcription or fail completely
-        return "Error during Summarization ($selectedModel): $e";
+        print("Summarization completed for: $filePath");
+        finalStatusMessage = summaryText?.trim() ?? "Summary not generated.";
+      } else {
+        // Document is not medical
+        updateProgress("Skipping medical extraction (not a medical doc)...");
+        print("Skipping detailed extraction for non-medical file: $filePath");
+        // Set default values for non-medical files
+        extractedLabResults = [];
+        extractedDateString = null;
+        summaryText = "File classified as non-medical.";
+        finalStatusMessage = summaryText;
       }
 
-      if (summaryText == null || summaryText.isEmpty) {
-        print("Summarization result was empty.");
-        return "Error: Summarization failed to produce text.";
-      }
-      print("Summarization completed for: $filePath");
-
-      // --- 7. Structure and Save JSON ---
+      // --- 8. Structure and Save JSON ---
       updateProgress("Saving results..."); // Report progress
-      final medokiData = {
-        // Keep original transcription for potential future use, but maybe trim it?
-        // 'original_transcription': transcriptionMarkdown?.trim(),
-        'summary': summaryText?.trim() ?? "Summary not generated.",
-        'testDateUTC':
-            extractedDateString, // Keep the extracted date (can be null)
-        'lab_results':
-            extractedLabResults ?? [], // Keep the extracted lab results
-      };
+
+      Map<String, dynamic> medokiData;
+      String outputFileName;
+      // Get original file name *before* potentially modifying it for the output path
+      final originalFileName = p.basename(filePath);
+
+      if (isMedical) {
+        medokiData = {
+          'summary': summaryText?.trim() ?? "Summary not generated.",
+          'testDateUTC': extractedDateString,
+          'lab_results': extractedLabResults ?? [],
+          // Optionally include transcription if needed later
+          // 'transcription_markdown': transcriptionMarkdown?.trim(),
+        };
+        outputFileName = '$originalFileName.medoki.json';
+      } else {
+        // Structure for non-medical files
+        medokiData = {
+          'classification': 'non-medical',
+          'message':
+              'This file was classified as non-medical and detailed extraction was skipped.',
+          // Include transcription for reference if desired
+          'transcription_markdown': transcriptionMarkdown?.trim(),
+        };
+        outputFileName = '$originalFileName.medoki.invalid.json';
+      }
+
       // Use an encoder with indentation for readability
       final jsonEncoder = JsonEncoder.withIndent('  ');
       final jsonString = jsonEncoder.convert(medokiData);
-      // Save to .medoki.json instead of .medoki.md
-      final medokiJsonFilePath = '$filePath.medoki.json';
+
+      // Construct the path for the data-files subdirectory
+      final originalFileDir = p.dirname(filePath);
+      // final originalFileName = p.basename(filePath); // Already have this from above
+      final dataFilesDir = p.join(originalFileDir, 'data-files');
+      final outputJsonFilePath = p.join(dataFilesDir, outputFileName);
 
       try {
-        final medokiFile = File(medokiJsonFilePath);
-        await medokiFile.writeAsString(jsonString);
-        print("Successfully wrote medoki JSON data to: $medokiJsonFilePath");
+        // Ensure the data-files directory exists
+        await Directory(dataFilesDir).create(recursive: true);
+
+        final outputFile = File(outputJsonFilePath);
+        await outputFile.writeAsString(jsonString);
+        print("Successfully wrote analysis data to: $outputJsonFilePath");
       } catch (e) {
-        print("Error writing .medoki.json file: $e");
+        print("Error writing analysis file to $outputJsonFilePath: $e");
+        statusNotifier.setStatus(filePath, ProcessingStatus.failed);
+        _ref.refresh(medicalRecordsProvider); // Refresh on error too
         return "Error: Could not save analysis results.";
       }
 
-      // --- 8. Update Status and Return Summary ---
+      // --- 9. Update Status and Return Message ---
       statusNotifier.setStatus(
         filePath,
         ProcessingStatus.completed,
       ); // Set status to completed
-      // Still return the summary, but the full data is now saved in the file.
-      return summaryText.trim();
+      // Return the summary (if medical) or the non-medical message
+      return finalStatusMessage;
     } catch (e, stacktrace) {
       print("Error during AI data extraction ($filePath): $e\n$stacktrace");
       statusNotifier.setStatus(

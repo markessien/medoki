@@ -14,6 +14,7 @@ import 'dart:convert'; // For jsonDecode
 import 'package:mediciapp/widgets/summary_sidebar.dart'; // Use package import, Re-use the summary sidebar
 import 'package:mediciapp/providers/file_processing_provider.dart'; // Import the processing status provider
 import 'package:mediciapp/providers/newly_added_files_provider.dart'; // Import the newly added files provider
+import 'package:mediciapp/services/batch_analysis_service.dart'; // Import batch analysis service
 
 // --- Providers for File Listing and Filtering ---
 
@@ -65,7 +66,7 @@ final medicalRecordsProvider = FutureProvider<MedicalRecordsResult>((
     return (items: <FileListItem>[], availableYears: <int>[]);
   }
 
-  // --- Step 1: Get ALL files recursively (excluding trash and .medoki.md) ---
+  // --- Step 1: Get ALL files recursively (excluding trash and .medoki.json) ---
   final List<File> allFiles = [];
   final trashPath = p.join(basePath, 'trash');
   final stream = directory.list(recursive: true, followLinks: false);
@@ -75,8 +76,11 @@ final medicalRecordsProvider = FutureProvider<MedicalRecordsResult>((
       continue; // Skip files/dirs inside trash
     }
     if (entity is File) {
-      // Exclude .medoki.md files directly
-      if (!entity.path.toLowerCase().endsWith('.medoki.md')) {
+      // Exclude .medoki.json files directly
+      // Exclude .medoki.json files and the specific analysis HTML file
+      final fileNameLower = p.basename(entity.path).toLowerCase();
+      if (!fileNameLower.endsWith('.medoki.json') &&
+          fileNameLower != 'analysis.medoki.analysis.html') {
         allFiles.add(entity);
       }
     }
@@ -84,7 +88,7 @@ final medicalRecordsProvider = FutureProvider<MedicalRecordsResult>((
   // filesToProcess is now allFiles, year filtering happens later
   final List<File> filesToProcess = allFiles;
 
-  // --- Step 2: Filter by Search Query (Filename and .medoki.md content) ---
+  // --- Step 2: Filter by Search Query (Filename and .medoki.json content) ---
   List<File> searchedFiles = [];
   if (searchQuery.isEmpty) {
     searchedFiles = filesToProcess; // No search query, use year-filtered list
@@ -98,8 +102,16 @@ final medicalRecordsProvider = FutureProvider<MedicalRecordsResult>((
           return file; // Return file if filename matches
         }
 
-        // If filename doesn't match, check .medoki.md content
-        final medokiFile = File('${file.path}.medoki.md');
+        // If filename doesn't match, check .medoki.json content
+        // Construct path within the data-files subdirectory
+        final originalFileDir = p.dirname(file.path);
+        final originalFileName = p.basename(file.path);
+        final dataFilesDir = p.join(originalFileDir, 'data-files');
+        final medokiFilePath = p.join(
+          dataFilesDir,
+          '$originalFileName.medoki.json',
+        );
+        final medokiFile = File(medokiFilePath);
         if (await medokiFile.exists()) {
           try {
             final content = await medokiFile.readAsString();
@@ -129,7 +141,11 @@ final medicalRecordsProvider = FutureProvider<MedicalRecordsResult>((
   for (final file in searchedFiles) {
     try {
       final modifiedDate = await file.lastModified();
-      final medokiPath = '${file.path}.medoki.md';
+      // Construct path within the data-files subdirectory
+      final originalFileDir = p.dirname(file.path);
+      final originalFileName = p.basename(file.path);
+      final dataFilesDir = p.join(originalFileDir, 'data-files');
+      final medokiPath = p.join(dataFilesDir, '$originalFileName.medoki.json');
       final medokiFile = File(medokiPath);
       final hasMedoki = await medokiFile.exists();
       DateTime? diagnosisDate;
@@ -333,10 +349,21 @@ class _MedicalRecordsPageState extends ConsumerState<MedicalRecordsPage> {
 
       for (final filePath in filesToDeletePaths) {
         final file = File(filePath);
-        final medokiFile = File('$filePath.medoki.md');
+        // Construct path for the medoki file within the data-files subdirectory
+        final originalFileDir = p.dirname(filePath);
+        final originalFileName = p.basename(filePath);
+        final dataFilesDir = p.join(originalFileDir, 'data-files');
+        final medokiFilePath = p.join(
+          dataFilesDir,
+          '$originalFileName.medoki.json',
+        );
+        final medokiFile = File(medokiFilePath);
         final fileName = p.basename(filePath);
         final destinationPath = p.join(trashPath, fileName);
-        final medokiDestinationPath = p.join(trashPath, '$fileName.medoki.md');
+        final medokiDestinationPath = p.join(
+          trashPath,
+          '$fileName.medoki.json',
+        );
 
         try {
           if (await file.exists()) {
@@ -807,21 +834,64 @@ class _MedicalRecordsPageState extends ConsumerState<MedicalRecordsPage> {
                           child: Padding(
                             padding: const EdgeInsets.all(16.0),
                             child: FloatingActionButton.extended(
-                              onPressed: () {
-                                // Placeholder action: Trigger a refresh
-                                // TODO: Implement proper logging
-                                ref.refresh(medicalRecordsProvider);
-                                // TODO: Implement actual rescan logic
+                              onPressed: () async {
+                                // Make async
+                                final batchService = ref.read(
+                                  batchAnalysisServiceProvider,
+                                );
+
+                                // Show initial feedback
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
                                       content: Text(
-                                        'Rescanning files... (refreshing list)',
+                                        'Starting batch AI analysis...',
                                       ),
-                                      duration: Duration(seconds: 1),
+                                      duration: Duration(seconds: 2),
                                     ),
                                   );
                                 }
+
+                                // Run batch analysis - no need to await as it handles its own state
+                                // The service gets the path internally from settings.
+                                batchService.runBatchAnalysis(
+                                  onProgress: (message) {
+                                    print("Batch Progress: $message");
+                                    // Optional: Show less frequent progress updates
+                                    if (message.contains('completed') &&
+                                        context.mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(message),
+                                          duration: const Duration(seconds: 3),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  onError: (error) {
+                                    print("Batch Error: $error");
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Batch Analysis Error: $error',
+                                          ),
+                                          backgroundColor: Colors.red,
+                                          duration: const Duration(seconds: 5),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  onFileProcessed: (processed, total) {
+                                    // Optional: Update a progress indicator if needed
+                                    print("Processed $processed / $total");
+                                  },
+                                );
+                                // The UI should update automatically based on fileProcessingStatusProvider changes
                               },
                               label: const Text('Rescan All Medical Records'),
                               icon: const Icon(Icons.refresh),

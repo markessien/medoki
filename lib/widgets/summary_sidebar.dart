@@ -18,10 +18,17 @@ String formatBytes(int bytes, [int decimals = 2]) {
   return '${(bytes / pow(1024, i)).toStringAsFixed(decimals)} ${suffixes[i]}';
 }
 
-// Provider to read and parse the .medoki.md file content
+// Provider to read and parse the .medoki.json file content
 final medokiFileContentProvider =
     FutureProvider.family<Map<String, dynamic>?, String>((ref, filePath) async {
-      final medokiFilePath = '$filePath.medoki.md';
+      // Construct path within the data-files subdirectory
+      final originalFileDir = p.dirname(filePath);
+      final originalFileName = p.basename(filePath);
+      final dataFilesDir = p.join(originalFileDir, 'data-files');
+      final medokiFilePath = p.join(
+        dataFilesDir,
+        '$originalFileName.medoki.json',
+      );
       final file = File(medokiFilePath);
 
       if (await file.exists()) {

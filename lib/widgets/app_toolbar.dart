@@ -104,7 +104,7 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
 
   // --- Action Methods (Remain in the main state) ---
 
-  // Method to handle the BATCH analysis process (generating .medoki.md files)
+  // Method to handle the BATCH analysis process (generating .medoki.json files)
   // This might be moved if a dedicated button is added elsewhere
   Future<void> _startBatchAnalysis() async {
     if (_isBatchAnalysisRunning) return;
@@ -181,7 +181,7 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
     }
   }
 
-  // Method for Trend Analysis
+  // Method for Trend Analysis (Now delegates to the service)
   Future<void> _startTrendAnalysis() async {
     if (_isTrendAnalysisRunning) return;
 
@@ -189,257 +189,75 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
       _isTrendAnalysisRunning = true;
     });
     final statusNotifier = ref.read(analysisStatusProvider.notifier);
-    statusNotifier.state = 'Starting trend analysis... Preparing data.';
+    statusNotifier.state = 'Starting trend analysis...'; // Initial status
     _showSnackBar('Starting trend analysis...');
 
+    final trendAnalysisService = ref.read(trendAnalysisServiceProvider);
+
     try {
-      final settingsService = SettingsService();
-      final trendAnalysisService = ref.read(trendAnalysisServiceProvider);
-      final recordsPath = await settingsService.getMedicalRecordsPath();
-
-      if (recordsPath == null || recordsPath.isEmpty) {
-        statusNotifier.state =
-            'Error: Medical records path not set in Settings.';
-        _showSnackBar('Error: Medical records path not set.', isError: true);
-        return;
-      }
-
-      final recordsDir = Directory(recordsPath);
-      if (!await recordsDir.exists()) {
-        statusNotifier.state =
-            'Error: Medical records directory not found: $recordsPath';
-        _showSnackBar(
-          'Error: Medical records directory not found.',
-          isError: true,
-        );
-        return;
-      }
-
-      statusNotifier.state = 'Scanning for analysis files...';
-      final List<Map<String, dynamic>> allData = [];
-      final List<String> errors = [];
-
-      await for (final entity in recordsDir.list(
-        recursive: true,
-        followLinks: false,
-      )) {
-        if (entity is File && entity.path.endsWith('.medoki.md')) {
-          try {
-            final content = await entity.readAsString();
-            final jsonData = jsonDecode(content) as Map<String, dynamic>;
-            if (jsonData.containsKey('summary') &&
-                jsonData.containsKey('lab_results') &&
-                jsonData.containsKey('testDateUTC')) {
-              allData.add({
-                'filePath': entity.path,
-                'summary': jsonData['summary'],
-                'testDateUTC': jsonData['testDateUTC'],
-                'lab_results': jsonData['lab_results'],
-              });
-            } else {
-              errors.add(
-                'Skipping ${p.basename(entity.path)}: Missing required keys.',
-              );
-            }
-          } catch (e) {
-            errors.add('Error reading/parsing ${p.basename(entity.path)}: $e');
-          }
-        }
-      }
-
-      if (allData.isEmpty) {
-        statusNotifier.state = 'No valid .medoki.md files found for analysis.';
-        _showSnackBar(
-          'No analysis data found. Process files first.',
-          isError: true,
-        );
-        return;
-      }
-
-      // Sort data by date
-      allData.sort((a, b) {
-        final dateA =
-            a['testDateUTC'] != null
-                ? DateTime.tryParse(a['testDateUTC'])
-                : null;
-        final dateB =
-            b['testDateUTC'] != null
-                ? DateTime.tryParse(b['testDateUTC'])
-                : null;
-        if (dateA == null && dateB == null) return 0;
-        if (dateA == null) return -1;
-        if (dateB == null) return 1;
-        return dateA.compareTo(dateB);
-      });
-
-      statusNotifier.state =
-          'Consolidating data from ${allData.length} records...';
-      final buffer = StringBuffer();
-      String latestRecordDataString = ''; // To store the latest record's data
-
-      for (int i = 0; i < allData.length; i++) {
-        final data = allData[i];
-        final fileName = p.basename(data['filePath']);
-        if (i == 0) {
-          // Update status only for the first file during consolidation
-          statusNotifier.state = 'Consolidating data starting with: $fileName';
-        }
-
-        final recordBuffer = StringBuffer(); // Buffer for individual record
-        recordBuffer.writeln('---');
-        recordBuffer.writeln('File: $fileName');
-        recordBuffer.writeln('Date: ${data['testDateUTC'] ?? 'Unknown'}');
-        recordBuffer.writeln('Summary: ${data['summary']}');
-        if (data['lab_results'] is List &&
-            (data['lab_results'] as List).isNotEmpty) {
-          recordBuffer.writeln('Lab Results:');
-          for (final lab in data['lab_results']) {
-            if (lab is Map) {
-              recordBuffer.writeln(
-                '  - ${lab['test_name']}: ${lab['value']} ${lab['units']} (${lab['reference_range']})',
-              );
-            }
-          }
-        }
-        recordBuffer.writeln();
-
-        final currentRecordString = recordBuffer.toString();
-        buffer.write(currentRecordString); // Append to the main buffer
-
-        // Store the latest record (last one after sorting)
-        if (i == allData.length - 1) {
-          latestRecordDataString = currentRecordString;
-        }
-      }
-      final consolidatedData = buffer.toString(); // All data consolidated
-
-      // --- Step 1: Analyze Current Situation ---
-      statusNotifier.state = 'Analyzing current health situation...';
-      print("Step 1: Generating prompt for Current Situation");
-      final currentSituationPrompt =
-          HtmlReportGenerator.generateCurrentSituationPrompt(
-            latestRecordDataString,
-          );
-
-      print("Step 1: Sending request to AI for Current Situation");
-      final String?
-      currentSituationResult = await trendAnalysisService.performTrendAnalysis(
-        latestRecordDataString, // Pass only latest data for context if needed by service
-        currentSituationPrompt, // Pass the specific prompt
-        (step) {
+      await trendAnalysisService.runFullTrendAnalysis(
+        onProgress: (message) {
           if (mounted) {
-            statusNotifier.state = 'AI Analysis (Current Situation): $step';
+            statusNotifier.state = message; // Update status from service
           }
-          print('Trend Analysis Progress (Current Situation): $step');
+          print('Trend Analysis Progress: $message'); // Keep console log
+        },
+        onError: (error) {
+          if (mounted) {
+            statusNotifier.state = error; // Show error status
+            _showSnackBar(error, isError: true, durationSeconds: 5);
+          }
+          print('Trend Analysis Error: $error'); // Keep console log
+        },
+        onComplete: (savedFilePath, fileErrors) {
+          if (mounted) {
+            // Update the HTML path provider ONLY if saving was successful
+            ref.read(analysisHtmlPathProvider.notifier).state = savedFilePath;
+
+            if (savedFilePath != null) {
+              String completionMessage =
+                  'Trend analysis completed successfully. Report saved.';
+              if (fileErrors.isNotEmpty) {
+                completionMessage +=
+                    ' Encountered ${fileErrors.length} file reading/parsing errors (see console).';
+                print(
+                  "--- File Reading/Parsing Errors ---\n${fileErrors.join('\n')}\n--- End File Reading/Parsing Errors ---",
+                );
+              }
+              statusNotifier.state = completionMessage; // Final success status
+              _showSnackBar(completionMessage, durationSeconds: 5);
+            } else {
+              // Error occurred during saving or earlier, onError handled the main message
+              // We might already be showing an error status.
+              // If fileErrors exist even on failure, log them.
+              if (fileErrors.isNotEmpty) {
+                print(
+                  "--- File Reading/Parsing Errors (during failed analysis) ---\n${fileErrors.join('\n')}\n--- End File Reading/Parsing Errors ---",
+                );
+                _showSnackBar(
+                  'Analysis failed, also encountered ${fileErrors.length} file reading errors.',
+                  isError: true,
+                  durationSeconds: 5,
+                );
+              }
+              // No need to show another snackbar if onError already did
+            }
+          }
         },
       );
-
-      if (currentSituationResult == null ||
-          currentSituationResult.startsWith('Error:')) {
-        statusNotifier.state =
-            currentSituationResult ??
-            'Error: Failed to analyze current situation.';
-        _showSnackBar(
-          currentSituationResult ?? 'Failed to analyze current situation.',
-          isError: true,
-        );
-        // Optionally return or handle error differently
-        return; // Stop further processing if the first step fails
-      }
-      print("Step 1: Received result for Current Situation");
-
-      // --- Step 2: Analyze Trends ---
-      statusNotifier.state = 'Analyzing historical trends...';
-      print("Step 2: Generating prompt for Trends");
-      final trendsPrompt = HtmlReportGenerator.generateTrendsPrompt(
-        consolidatedData, // Use all data for trends
-      );
-
-      print("Step 2: Sending request to AI for Trends");
-      final String? trendsResult = await trendAnalysisService
-          .performTrendAnalysis(
-            consolidatedData, // Pass all data for context if needed by service
-            trendsPrompt, // Pass the specific prompt
-            (step) {
-              if (mounted) {
-                statusNotifier.state = 'AI Analysis (Trends): $step';
-              }
-              print('Trend Analysis Progress (Trends): $step');
-            },
-          );
-
-      if (trendsResult == null || trendsResult.startsWith('Error:')) {
-        statusNotifier.state =
-            trendsResult ?? 'Error: Failed to analyze trends.';
-        _showSnackBar(
-          trendsResult ?? 'Failed to analyze trends.',
-          isError: true,
-        );
-        // Optionally save the partial result or handle error
-        return; // Stop further processing if the second step fails
-      }
-      print("Step 2: Received result for Trends");
-
-      // --- Step 3: Combine and Save Report ---
-      statusNotifier.state = 'Generating final report...';
-      print("Step 3: Combining results into final HTML");
-      final String finalHtmlContent =
-          HtmlReportGenerator.generateFullHtmlReport(
-            currentSituationResult, // Result from step 1
-            trendsResult, // Result from step 2
-          );
-
-      final String outputFileName = 'analysis.medoki.analysis.html';
-      String? savedFilePath;
-
-      try {
-        // We already got recordsPath earlier, reuse it
-        if (recordsPath != null && recordsPath.isNotEmpty) {
-          final filePath = p.join(recordsPath, outputFileName);
-          final outputFile = File(filePath);
-          await outputFile.writeAsString(finalHtmlContent);
-          savedFilePath = filePath; // Store the path if save succeeds
-          print('Analysis HTML saved to: $filePath');
-          statusNotifier.state =
-              'Analysis complete. Report saved.'; // Update status
-          _showSnackBar('Trend analysis completed successfully.');
-        } else {
-          // This case should have been caught earlier, but handle defensively
-          throw Exception('Medical records path is not available.');
-        }
-      } catch (e) {
-        print('Error saving analysis HTML: $e');
-        statusNotifier.state = 'Error saving analysis report: $e';
-        _showSnackBar('Error saving analysis report.', isError: true);
-        // Don't update the HTML path provider if saving failed
-      }
-
-      // Update the provider with the path ONLY if saving was successful
-      ref.read(analysisHtmlPathProvider.notifier).state = savedFilePath;
-
-      if (kDebugMode && savedFilePath != null) {
-        // Optionally log only parts if the full HTML is too long
-        print(
-          "--- Trend Analysis Combined Report Saved ---\nPath: $savedFilePath\n--- End Report ---",
-        );
-      }
-
-      // Handle file reading/parsing errors collected earlier
-      if (errors.isNotEmpty) {
-        print(
-          "--- File Reading/Parsing Errors ---\n${errors.join('\n')}\n--- End File Reading/Parsing Errors ---",
-        );
-        _showSnackBar(
-          'Completed with ${errors.length} file reading errors (see console).',
-          durationSeconds: 5,
-        );
-      }
     } catch (e, stacktrace) {
-      print("Error during Trend Analysis setup or execution: $e\n$stacktrace");
-      statusNotifier.state =
-          'Error: An unexpected error occurred during trend analysis: $e';
-      _showSnackBar('An unexpected error occurred: $e', isError: true);
+      // Catch unexpected errors during the *call* to the service itself
+      // (The service's internal errors are handled by onError callback)
+      print(
+        "Error calling runFullTrendAnalysis service method: $e\n$stacktrace",
+      );
+      if (mounted) {
+        final errorMessage = 'Error initiating trend analysis service: $e';
+        statusNotifier.state = errorMessage;
+        _showSnackBar(errorMessage, isError: true, durationSeconds: 5);
+      }
     } finally {
+      // Ensure loading state is always reset
       if (mounted) {
         setState(() {
           _isTrendAnalysisRunning = false;

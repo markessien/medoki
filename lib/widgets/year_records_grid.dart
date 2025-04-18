@@ -10,7 +10,7 @@ import '../providers/selected_file_provider.dart'; // Import the provider
 // import 'package:file_picker/file_picker.dart';
 
 // --- Provider for Medoki File Status ---
-// Family provider: Keyed by yearName, holds a Set of file paths that have a .medoki.md file
+// Family provider: Keyed by yearName, holds a Set of file paths that have a .medoki.json file
 final medokiStatusProvider = StateProvider.family<Set<String>, String>((
   ref,
   yearName,
@@ -99,11 +99,11 @@ class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
 
       if (await directory.exists()) {
         itemsList = await directory.list().toList();
-        // Filter out .medoki.md files
+        // Filter out .medoki.json files
         itemsList =
             itemsList
                 .where(
-                  (item) => !item.path.toLowerCase().endsWith('.medoki.md'),
+                  (item) => !item.path.toLowerCase().endsWith('.medoki.json'),
                 )
                 .toList();
         // Sort items: directories first, then files, alphabetically
@@ -120,13 +120,20 @@ class _YearRecordsGridState extends ConsumerState<YearRecordsGrid> {
       }
       // If directory doesn't exist, itemsList remains empty
 
-      // Check for corresponding .medoki.md files and update the provider
+      // Check for corresponding .medoki.json files and update the provider
       final Set<String> medokiFiles = {};
       for (var item in itemsList) {
         if (item is File) {
-          final medokiPath = '${item.path}.medoki.md';
+          // Construct path within the data-files subdirectory
+          final originalFileDir = p.dirname(item.path);
+          final originalFileName = p.basename(item.path);
+          final dataFilesDir = p.join(originalFileDir, 'data-files');
+          final medokiPath = p.join(
+            dataFilesDir,
+            '$originalFileName.medoki.json',
+          );
           if (await File(medokiPath).exists()) {
-            medokiFiles.add(item.path); // Add path if .medoki.md exists
+            medokiFiles.add(item.path); // Add path if .medoki.json exists
           }
         }
       }

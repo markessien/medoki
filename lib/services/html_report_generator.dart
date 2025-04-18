@@ -39,15 +39,48 @@ p { margin-bottom: 12px; }
 $_baseInstructions
 
 Task: Analyze the LATEST medical record provided below and generate an HTML fragment summarizing the current health situation.
+The health data should be written in language that is easy to understand for a layperson. This is not for medical professionals.
 
 The HTML fragment MUST:
 1. Start with an `<h2>` tag containing "Current Health Situation".
 2. Be followed by a paragraph (`<p>`) summarizing the key findings from THIS specific record (e.g., main points from the summary, notable lab results compared to reference ranges).
+3. Use plain language to describe the health situation, avoiding technical jargon.
+4. Focus on a positive and informative tone, highlighting any areas of concern or improvement.
+5. Include any relevant lab values or observations that stand out.
+
 
 Latest Record Data:
 ---
 $latestRecordData
 ---
+
+Remember: Generate ONLY the HTML fragment for this section (starting with `<h2>`).
+''';
+  }
+
+  /// Generates the prompt for the "Yearly Summaries" section.
+  static String generateYearlySummariesPrompt(String allConsolidatedData) {
+    return '''
+$_baseInstructions
+
+Task: Analyze ALL the consolidated medical records provided below, group them by year based on the 'Date' field, and generate an HTML fragment summarizing the key health points for EACH year in plain language.
+      The health data should be written in language that is easy to understand for a layperson. This is not for medical professionals.
+
+The HTML fragment MUST:
+1. Start with an `<h2>` tag containing "Yearly Summaries".
+2. Be followed by an unordered list (`<ul>`).
+3. Each list item (`<li>`) should represent one year and start with the year (e.g., "YYYY: ").
+4. Following the year, provide a brief, plain-language summary of the main health observations or events for that year based ONLY on the records provided for that year.
+5. Focus on a positive and informative tone, highlighting any areas of concern or improvement.
+6. Include any relevant lab values or observations that stand out.
+7. Highlight any significant changes or trends compared to previous years.
+
+Consolidated Data (All Records):
+---
+$allConsolidatedData
+---
+
+Example list item format: `<li>2012: Mark was in good health, with elevated liver values noted in the May report.</li>`
 
 Remember: Generate ONLY the HTML fragment for this section (starting with `<h2>`).
 ''';
@@ -79,6 +112,7 @@ Remember: Generate ONLY the HTML fragment for this section (starting with `<h2>`
   /// Assembles the final HTML report from the generated fragments.
   static String generateFullHtmlReport(
     String currentSituationHtml,
+    String yearlySummariesHtml, // Added yearly summaries parameter
     String trendsHtml,
   ) {
     // Basic validation/fallback for fragments
@@ -86,6 +120,11 @@ Remember: Generate ONLY the HTML fragment for this section (starting with `<h2>`
         (currentSituationHtml.isNotEmpty)
             ? currentSituationHtml
             : '<h2>Current Health Situation</h2><p>Error: Analysis data not generated.</p>';
+    // Added fallback for yearly summaries
+    final yearlySummariesContent =
+        (yearlySummariesHtml.isNotEmpty)
+            ? yearlySummariesHtml
+            : '<h2>Yearly Summaries</h2><p>Error: Analysis data not generated.</p>';
     final trendsContent =
         (trendsHtml.isNotEmpty)
             ? trendsHtml
@@ -107,6 +146,10 @@ $_cssStyles
 
     <div class="report-section">
       $situationContent
+    </div>
+
+    <div class="report-section">
+      $yearlySummariesContent
     </div>
 
     <div class="report-section">

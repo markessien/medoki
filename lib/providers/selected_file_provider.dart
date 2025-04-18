@@ -55,7 +55,14 @@ class SelectedFileNotifier extends StateNotifier<SelectedFileState> {
       if (await file.exists()) {
         final fileStat = await file.stat();
         final fileName = p.basename(filePath);
-        final medokiFilePath = '$filePath.medoki.md'; // Construct path
+        // Construct path within the data-files subdirectory
+        final originalFileDir = p.dirname(filePath);
+        final originalFileName = p.basename(filePath);
+        final dataFilesDir = p.join(originalFileDir, 'data-files');
+        final medokiFilePath = p.join(
+          dataFilesDir,
+          '$originalFileName.medoki.json',
+        );
         String? summaryContent;
 
         try {
