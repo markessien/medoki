@@ -91,7 +91,7 @@ Historical Data:
         case AiModelType.gemini:
           final geminiModel = google_ai.GenerativeModel(
             model: 'gemini-1.5-pro-latest', // Use a powerful model for analysis
-            apiKey: apiKey!,
+            apiKey: apiKey,
             generationConfig: google_ai.GenerationConfig(temperature: 0.5),
           );
           final content = [google_ai.Content.text(fullPrompt)];
@@ -215,8 +215,9 @@ Historical Data:
                 ? DateTime.tryParse(b['testDateUTC'])
                 : null;
         if (dateA == null && dateB == null) return 0;
-        if (dateA == null)
+        if (dateA == null) {
           return -1; // Or 1 depending on desired sort for nulls
+        }
         if (dateB == null) return 1; // Or -1
         return dateA.compareTo(dateB);
       });
@@ -363,7 +364,7 @@ Historical Data:
       try {
         // recordsPath is guaranteed non-null here due to earlier checks
         // Construct path within the data-files subdirectory
-        final dataFilesDir = p.join(recordsPath!, 'data-files');
+        final dataFilesDir = p.join(recordsPath, 'data-files');
         final filePath = p.join(dataFilesDir, outputFileName);
 
         // Ensure the data-files directory exists

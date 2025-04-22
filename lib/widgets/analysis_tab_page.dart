@@ -9,7 +9,7 @@ import 'package:webview_windows/webview_windows.dart' as windows_webview;
 
 import '../services/file_service.dart'; // Import the file service
 import '../services/settings_service.dart'; // Import settings service for initial load
-import 'document_chat_widget.dart'; // Import the chat widget
+import 'analysis_chat_widget.dart'; // Import the analysis chat widget
 import '../providers/selected_file_provider.dart'; // Import the provider
 import 'medical_records_page.dart'; // Import medicalRecordsProvider (Renamed file)
 import '../providers/analysis_providers.dart'; // Import the shared status and HTML path providers
@@ -139,21 +139,20 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
     });
 
     // Main Column to hold content and chat widget
-    return Column(
+    return Stack(
       children: [
-        // Expanded content area
-        Expanded(
+        // Main content area (Analysis Report)
+        Positioned.fill(
           child: Padding(
             padding: const EdgeInsets.only(
               left: 32.0,
               right: 32.0,
               top: 24.0,
-              bottom: 12.0,
+              bottom:
+                  72.0, // Increased bottom padding to make space for the chat widget
             ),
             child: Container(
               width: double.infinity,
-              // Remove internal padding for WebView to take full space
-              // padding: const EdgeInsets.all(32.0),
               decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border.all(color: Colors.grey.shade300, width: 1.0),
@@ -167,7 +166,6 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
                   ),
                 ],
               ),
-              // Clip WebView content to rounded corners
               clipBehavior: Clip.antiAlias,
               child: allRecordsAsyncValue.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -176,23 +174,16 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
                         Center(child: Text('Error checking for files: $err')),
                 data: (recordsData) {
                   if (recordsData.items.isEmpty) {
-                    // --- No files exist: Show prompt to add records ---
                     return _buildAddRecordsPrompt(context, ref);
                   } else {
-                    // --- Files exist: Show WebView, Progress, or "Run Analysis" prompt ---
                     if (analysisHtmlPath != null &&
                         analysisHtmlPath.isNotEmpty) {
-                      // --- HTML Path exists: Show Platform-Specific WebView ---
                       if (Platform.isWindows) {
-                        // --- Windows ---
                         if (_isWindowsControllerReady &&
                             _windowsController != null) {
-                          // Schedule the URL load after the frame is built
-                          // This ensures it runs on initial build and subsequent rebuilds (like hot reload)
                           WidgetsBinding.instance.addPostFrameCallback((_) {
                             if (mounted &&
                                 _windowsController != null &&
-                                analysisHtmlPath != null &&
                                 analysisHtmlPath.isNotEmpty) {
                               try {
                                 final uri = Uri.file(analysisHtmlPath);
@@ -216,26 +207,21 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
                               }
                             }
                           });
-                          // Return the WebView widget directly
                           return windows_webview.Webview(_windowsController!);
-                          // No ValueKey needed here as reload is handled by postFrameCallback
                         } else {
-                          // Windows Controller initializing or failed
                           return const Center(
                             child: CircularProgressIndicator(
                               valueColor: AlwaysStoppedAnimation<Color>(
                                 Colors.blue,
                               ),
                             ),
-                          ); // Indicate loading
+                          );
                         }
                       } else {
-                        // --- Non-Windows (Use webview_flutter) ---
                         return flutter_webview.WebViewWidget(
-                          // Combine path and trigger for the key to force reload on trigger change
                           key: ValueKey('$analysisHtmlPath-$refreshTrigger'),
                           controller:
-                              flutter_webview.WebViewController() // Create controller inline
+                              flutter_webview.WebViewController()
                                 ..setJavaScriptMode(
                                   flutter_webview.JavaScriptMode.unrestricted,
                                 )
@@ -255,7 +241,6 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
                                     onNavigationRequest: (
                                       flutter_webview.NavigationRequest request,
                                     ) {
-                                      // Prevent navigation away from the local file
                                       if (!request.url.startsWith('file://')) {
                                         return flutter_webview
                                             .NavigationDecision
@@ -267,17 +252,13 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
                                     },
                                   ),
                                 )
-                                ..loadFile(
-                                  analysisHtmlPath,
-                                ) // Load file on creation
+                                ..loadFile(analysisHtmlPath)
                                 ..setUserAgent("MedokiFlutterApp"),
                         );
                       }
                     } else {
-                      // --- No HTML Path: Show Progress or "Run Analysis" prompt ---
                       final bool isAnalyzing = analysisStatus != 'Ready';
                       if (isAnalyzing) {
-                        // --- Analysis in progress: Show status ---
                         return Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -285,7 +266,6 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
                               const CircularProgressIndicator(),
                               const SizedBox(height: 16),
                               Padding(
-                                // Add padding for status text
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 32.0,
                                 ),
@@ -299,10 +279,8 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
                           ),
                         );
                       } else {
-                        // --- Analysis not run yet: Show prompt ---
                         return Center(
                           child: Padding(
-                            // Add padding for prompt text
                             padding: const EdgeInsets.symmetric(
                               horizontal: 32.0,
                             ),
@@ -325,7 +303,17 @@ class _AnalysisTabPageState extends ConsumerState<AnalysisTabPage> {
           ),
         ),
         // Floating Chat Widget at the bottom
-        DocumentChatWidget(selectedFilePath: selectedFileState.path),
+        Positioned(
+          left: 32.0, // Align with the left padding of the main content
+          right: 32.0, // Align with the right padding of the main content
+          bottom: 12.0, // Align with the bottom padding of the main content
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              minHeight: 60.0, // Minimum height for the collapsed chat
+            ),
+            child: AnalysisChatWidget(),
+          ),
+        ),
       ],
     );
   }

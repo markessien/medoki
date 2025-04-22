@@ -124,7 +124,7 @@ class AIService {
           case AiModelType.gemini:
             final geminiModel = google_ai.GenerativeModel(
               model: 'gemini-2.0-flash', // Use a capable model
-              apiKey: apiKey!,
+              apiKey: apiKey,
             );
             final content = [
               google_ai.Content.multi([
@@ -196,7 +196,7 @@ $transcriptionMarkdown
           case AiModelType.gemini:
             final geminiModel = google_ai.GenerativeModel(
               model: 'gemini-2.0-flash',
-              apiKey: apiKey!,
+              apiKey: apiKey,
               generationConfig: google_ai.GenerationConfig(
                 responseMimeType: "application/json", // Request JSON output
               ),
@@ -294,7 +294,7 @@ $transcriptionMarkdown
             case AiModelType.gemini:
               final geminiModel = google_ai.GenerativeModel(
                 model: 'gemini-2.0-flash', // Or a model suitable for text tasks
-                apiKey: apiKey!,
+                apiKey: apiKey,
               );
               final content = [google_ai.Content.text(labExtractionPrompt)];
               final response = await geminiModel.generateContent(content);
@@ -349,13 +349,13 @@ $transcriptionMarkdown
                 // Optional: Add deeper validation per item schema here
               } else {
                 print(
-                  "Warning: Lab result extraction returned valid JSON, but it wasn't a List: ${rawLabResultString}",
+                  "Warning: Lab result extraction returned valid JSON, but it wasn't a List: $rawLabResultString",
                 );
                 extractedLabResults = []; // Treat as no results if not a list
               }
             } catch (e) {
               print(
-                "Error decoding lab results JSON ($selectedModel): $e. Raw response: ${rawLabResultString}",
+                "Error decoding lab results JSON ($selectedModel): $e. Raw response: $rawLabResultString",
               );
               extractedLabResults = []; // Treat as no results on decode error
             }
@@ -367,7 +367,7 @@ $transcriptionMarkdown
           extractedLabResults = []; // Default to empty list on error
         }
         print(
-          "Lab Result Extraction completed for: $filePath. Found ${extractedLabResults?.length ?? 0} results.",
+          "Lab Result Extraction completed for: $filePath. Found ${extractedLabResults.length ?? 0} results.",
         );
 
         // --- 6. Step 4: Date Extraction (if medical) ---
@@ -383,7 +383,7 @@ $transcriptionMarkdown
             case AiModelType.gemini:
               final geminiModel = google_ai.GenerativeModel(
                 model: 'gemini-2.0-flash', // Or a model suitable for text tasks
-                apiKey: apiKey!,
+                apiKey: apiKey,
               );
               final content = [google_ai.Content.text(dateExtractionPrompt)];
               final response = await geminiModel.generateContent(content);
@@ -456,7 +456,7 @@ $transcriptionMarkdown
               final geminiModel = google_ai.GenerativeModel(
                 model:
                     'gemini-2.0-flash', // Can use the same or a different text model
-                apiKey: apiKey!,
+                apiKey: apiKey,
               );
               final content = [google_ai.Content.text(summarizationPrompt)];
               final response = await geminiModel.generateContent(content);
@@ -496,7 +496,7 @@ $transcriptionMarkdown
         print("Summarization completed for: $filePath");
 
         // *** Add check for empty summary if medical ***
-        if (summaryText == null || summaryText.trim().isEmpty) {
+        if (summaryText.trim().isEmpty) {
           print(
             "Error: Summarization failed to produce text for medical document.",
           );
@@ -527,12 +527,12 @@ $transcriptionMarkdown
 
       if (isMedical) {
         medokiData = {
-          'summary': summaryText?.trim() ?? "Summary not generated.",
+          'summary': summaryText.trim() ?? "Summary not generated.",
           'testDateUTC': extractedDateString,
           'lab_results': extractedLabResults ?? [],
           // Optionally include transcription if needed later
           'transcription_markdown':
-              transcriptionMarkdown?.trim(), // Uncommented this line
+              transcriptionMarkdown.trim(), // Uncommented this line
         };
         outputFileName = '$originalFileName.medoki.json';
       } else {
@@ -542,7 +542,7 @@ $transcriptionMarkdown
           'message':
               'This file was classified as non-medical and detailed extraction was skipped.',
           // Include transcription for reference if desired
-          'transcription_markdown': transcriptionMarkdown?.trim(),
+          'transcription_markdown': transcriptionMarkdown.trim(),
         };
         outputFileName = '$originalFileName.medoki.invalid.json';
       }

@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 // import 'models/year.dart'; // Removed
 import 'pages/settings_page.dart'; // Import SettingsPage
-import 'services/settings_service.dart'; // Import SettingsService
+// Import SettingsService
 // import 'services/year_service.dart'; // Removed
 // import 'widgets/year_management_dialog.dart'; // Removed
 // import 'widgets/year_records_grid.dart'; // Removed (will replace)
-import 'widgets/summary_sidebar.dart'; // Import the new sidebar widget
+// Import the new sidebar widget
 import 'widgets/app_toolbar.dart'; // Import the new toolbar widget
 // import 'widgets/year_tab_page.dart'; // Removed
 import 'widgets/analysis_tab_page.dart'; // Import the new analysis tab page widget
 // import 'widgets/analysis_sidebar.dart'; // Removed import
 import 'widgets/medical_records_page.dart'; // Import the new medical records page widget (Renamed file)
-import 'providers/selected_file_provider.dart'; // Import the selected file provider
+// Import the selected file provider
 import 'providers/settings_provider.dart'; // Import the settings provider
 // import 'providers/year_service_provider.dart'; // Removed
 // import 'providers/years_provider.dart'; // Removed
@@ -301,7 +301,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
                           ),
                         );
                       },
-                    ),
+                    ), // Correctly closes IconButton
                     const SizedBox(width: 8), // Add some padding
                   ],
                 ),
@@ -319,33 +319,39 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
         ),
       ),
       // Use settingsState to handle loading/error for the main body
-      body: Builder(
-        // Use Builder to access settingsState easily
-        builder: (context) {
-          if (settingsState.isLoading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (settingsState.error != null) {
-            return Center(
-              child: Text('Error loading settings: ${settingsState.error}'),
-            );
-          }
-          // Get path from loaded state (still needed for the file list)
-          final basePathData =
-              settingsState.medicalRecordsPath; // Use renamed property
+      // Wrap body in SafeArea to help with constraints
+      body: SafeArea(
+        child: Builder(
+          // Use Builder to access settingsState easily
+          builder: (context) {
+            if (settingsState.isLoading) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (settingsState.error != null) {
+              return Center(
+                child: Text('Error loading settings: ${settingsState.error}'),
+              );
+            }
+            // Get path from loaded state (still needed for the file list)
+            final basePathData =
+                settingsState.medicalRecordsPath; // Use renamed property
 
-          // Build the TabBarView with fixed children
-          return TabBarView(
-            controller: _tabController!,
-            children: [
-              // Analysis Tab - Now just the centered page
-              const AnalysisTabPage(),
-              // Medical Records Tab
-              const MedicalRecordsPage(), // Use the renamed widget
-            ],
-          );
-        },
-      ),
-    );
-  }
+            // Build the TabBarView with fixed children, wrapped in a Container
+            // to help ensure constraints are passed down from Scaffold body.
+            return Container(
+              child: TabBarView(
+                controller: _tabController!,
+                children: [
+                  // Analysis Tab - Now just the centered page
+                  const AnalysisTabPage(),
+                  // Medical Records Tab
+                  const MedicalRecordsPage(), // Use the renamed widget
+                ],
+              ),
+            );
+          },
+        ), // Correctly closes Builder
+      ), // Closes SafeArea
+    ); // Closes the body property of Scaffold
+  } // Correctly closes build method
 }

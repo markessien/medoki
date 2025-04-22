@@ -219,17 +219,21 @@ final medicalRecordsProvider = FutureProvider<MedicalRecordsResult>((
   filteredItems.sort((a, b) {
     // Priority: Processing > Pending > Others
     if (a.status == ProcessingStatus.processing &&
-        b.status != ProcessingStatus.processing)
+        b.status != ProcessingStatus.processing) {
       return -1;
+    }
     if (b.status == ProcessingStatus.processing &&
-        a.status != ProcessingStatus.processing)
+        a.status != ProcessingStatus.processing) {
       return 1;
+    }
     if (a.status == ProcessingStatus.pending &&
-        b.status != ProcessingStatus.pending)
+        b.status != ProcessingStatus.pending) {
       return -1;
+    }
     if (b.status == ProcessingStatus.pending &&
-        a.status != ProcessingStatus.pending)
+        a.status != ProcessingStatus.pending) {
       return 1;
+    }
 
     // If statuses are the same priority level (or both are completed/failed/none), sort by date/name
     final dateA = a.diagnosisDate;
@@ -374,7 +378,7 @@ class _MedicalRecordsPageState extends ConsumerState<MedicalRecordsPage> {
           }
           successCount++;
         } catch (e) {
-          errors.add('Error moving ${fileName}: $e');
+          errors.add('Error moving $fileName: $e');
           // TODO: Implement proper logging
         }
       }

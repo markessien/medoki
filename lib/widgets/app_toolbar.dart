@@ -576,7 +576,7 @@ class _SearchToolbarItemState extends ConsumerState<_SearchToolbarItem> {
       },
       child:
           _isSearchExpanded
-              ? Container(
+              ? SizedBox(
                 key: const ValueKey('searchField'),
                 width: 250,
                 child: TextField(

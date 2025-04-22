@@ -128,7 +128,7 @@ class FileService {
         }
         if (errors.isNotEmpty) {
           message +=
-              (message.isNotEmpty ? '\n' : '') + 'Errors: ${errors.join(', ')}';
+              '${message.isNotEmpty ? '\n' : ''}Errors: ${errors.join(', ')}';
         }
         return message.isEmpty ? 'No files were added.' : message;
       } else {

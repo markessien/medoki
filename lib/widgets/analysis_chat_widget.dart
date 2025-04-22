@@ -1,55 +1,29 @@
-import 'dart:io'; // Import for File operations
-import 'package:flutter/material.dart';
-import 'dart:io'; // Import for File operations
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:mediciapp/widgets/medical_records_page.dart'; // Import to access medicalRecordsProvider
-import 'package:path/path.dart' as p; // Import path package
 import '../providers/chat_providers.dart'; // Import the new chat providers
 
-// Removed global providers, state will be managed locally
+// This widget will handle the chat functionality specifically for the Analysis tab.
+// It will not be tied to a specific document like DocumentChatWidget.
 
-class DocumentChatWidget extends ConsumerStatefulWidget {
-  final String? selectedFilePath; // Pass the selected file path
-
-  const DocumentChatWidget({super.key, required this.selectedFilePath});
+class AnalysisChatWidget extends ConsumerStatefulWidget {
+  const AnalysisChatWidget({super.key});
 
   @override
-  ConsumerState<DocumentChatWidget> createState() => _DocumentChatWidgetState();
+  ConsumerState<AnalysisChatWidget> createState() => _AnalysisChatWidgetState();
 }
 
-class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
+class _AnalysisChatWidgetState extends ConsumerState<AnalysisChatWidget> {
   final TextEditingController _chatController = TextEditingController();
-  final ScrollController _scrollController =
-      ScrollController(); // To scroll chat
-  List<String> _messages = []; // Local state for messages
+  final ScrollController _scrollController = ScrollController();
+  // Removed _messages local state
   bool _isLoading = false; // Local state for loading
   // Removed _isExpanded and _hasInitialMessage local state
 
   @override
   void initState() {
     super.initState();
-    // Clear chat if a file is already selected on initial build
-    if (widget.selectedFilePath != null) {
-      // Use ref to access the provider and clear state
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(documentChatExpandedProvider.notifier).state = false;
-        ref.read(documentChatInitialMessageProvider.notifier).state = false;
-      });
-      _clearChat(); // Clear local messages
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant DocumentChatWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Clear chat if the selected file path changes and reset initial message flag
-    if (widget.selectedFilePath != oldWidget.selectedFilePath) {
-      _clearChat(); // Clear local messages
-      // Use ref to access the provider and reset state
-      ref.read(documentChatExpandedProvider.notifier).state = false;
-      ref.read(documentChatInitialMessageProvider.notifier).state = false;
-    }
+    // Load messages from history when the widget initializes
+    ref.read(analysisChatMessagesProvider.notifier).loadMessages();
   }
 
   @override
@@ -59,29 +33,17 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
     super.dispose();
   }
 
-  // Moved _clearChat outside of _sendMessage
-  void _clearChat() {
-    setState(() {
-      _messages = [];
-      _isLoading = false;
-      _chatController.clear(); // Also clear the input field
-      // Expanded and initial message state are now managed by providers
-    });
-  }
-
   // Method to toggle the expanded state using the provider
   void _toggleExpanded(WidgetRef ref) {
-    final isExpanded = ref.read(documentChatExpandedProvider.notifier).state;
-    ref.read(documentChatExpandedProvider.notifier).state = !isExpanded;
+    final isExpanded = ref.read(analysisChatExpandedProvider.notifier).state;
+    ref.read(analysisChatExpandedProvider.notifier).state = !isExpanded;
 
     // Add initial message if expanding and it hasn't been added yet
-    if (!isExpanded &&
-        !ref.read(documentChatInitialMessageProvider) &&
-        widget.selectedFilePath != null) {
-      _messages.add(
-        'AI: Hi, what can I help you with regarding this document?',
-      );
-      ref.read(documentChatInitialMessageProvider.notifier).state = true;
+    if (!isExpanded && !ref.read(analysisChatInitialMessageProvider)) {
+      ref
+          .read(analysisChatMessagesProvider.notifier)
+          .addMessage('AI: Hi, what can I help you with?');
+      ref.read(analysisChatInitialMessageProvider.notifier).state = true;
       // Scroll to the new message
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
@@ -95,68 +57,43 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
     }
   }
 
-  // Removed duplicate _sendMessage definition start
+  // Placeholder for sending a message in the analysis context
   Future<void> _sendMessage(WidgetRef ref) async {
     final message = _chatController.text.trim();
-    if (message.isEmpty || widget.selectedFilePath == null) return;
+    if (message.isEmpty) return;
 
-    // Update local state
+    // Add user message to the provider
+    ref.read(analysisChatMessagesProvider.notifier).addMessage('You: $message');
+
     setState(() {
-      _messages = [..._messages, 'You: $message'];
       _isLoading = true;
       // Expand chat when a message is sent using the provider
-      ref.read(documentChatExpandedProvider.notifier).state = true;
-      if (!ref.read(documentChatInitialMessageProvider)) {
+      ref.read(analysisChatExpandedProvider.notifier).state = true;
+      if (!ref.read(analysisChatInitialMessageProvider)) {
         // Add initial message if sending the first message
-        _messages.insert(
-          0,
-          'AI: Hi, what can I help you with regarding this document?',
-        );
-        ref.read(documentChatInitialMessageProvider.notifier).state = true;
+        ref
+            .read(analysisChatMessagesProvider.notifier)
+            .addMessage('AI: Hi, what can I help you with?');
+        ref.read(analysisChatInitialMessageProvider.notifier).state = true;
       }
     });
     _chatController.clear();
 
-    // --- Get context from the SELECTED .medoki.json file ---
-    // Modified to get context ONLY from the selected file's medoki data
-    String selectedMedokiContent =
-        "Could not find or read the associated .medoki.json file for context."; // Default context
-    try {
-      // Construct the path to the corresponding .medoki.json file
-      final originalFileDir = p.dirname(widget.selectedFilePath!);
-      final originalFileName = p.basename(widget.selectedFilePath!);
-      // Assuming .medoki.json files are in a 'data-files' subdirectory relative to the original
-      // Adjust this logic if your file structure is different
-      final dataFilesDir = p.join(originalFileDir, 'data-files');
-      final medokiPath = p.join(dataFilesDir, '$originalFileName.medoki.json');
-      final medokiFile = File(medokiPath);
+    // TODO: Implement actual AI interaction for analysis chat
+    // This will involve calling an AI service with the user's message
+    // and potentially relevant analysis context (e.g., summary data).
+    await Future.delayed(const Duration(seconds: 2)); // Simulate AI processing
 
-      if (await medokiFile.exists()) {
-        selectedMedokiContent = await medokiFile.readAsString();
-      } else {
-        selectedMedokiContent =
-            "No .medoki.json file found at expected path: $medokiPath";
-      }
-    } catch (e) {
-      print("Error reading selected medoki file for chat context: $e");
-      // Keep the default error message
-    }
-    // ---------------------------------------------
-
-    // Simulate AI response (replace with actual API call)
-    // TODO: Replace this simulation with a real call to your AI service,
-    // passing `message` and `selectedMedokiContent` as input.
-    await Future.delayed(const Duration(seconds: 2)); // Simulate network delay
     final aiResponse =
-        'AI: Responding to "$message" (Context: ${selectedMedokiContent.length} chars from ${p.basename(widget.selectedFilePath!)})'; // Example response
+        'AI: This is a simulated response for analysis chat based on "$message".';
 
-    // Update local state with AI response
+    // Add AI response to the provider
+    ref.read(analysisChatMessagesProvider.notifier).addMessage(aiResponse);
+
     setState(() {
-      _messages = [..._messages, aiResponse];
       _isLoading = false;
     });
 
-    // Scroll to bottom after sending/receiving
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -171,12 +108,10 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
   @override
   Widget build(BuildContext context) {
     // Watch the expanded state from the provider
-    final isExpanded = ref.watch(documentChatExpandedProvider);
-    final messages = _messages; // Still using local messages for now
+    final isExpanded = ref.watch(analysisChatExpandedProvider);
+    // Watch the messages from the provider
+    final messages = ref.watch(analysisChatMessagesProvider);
     final isLoading = _isLoading;
-
-    // Disable input if no file is selected
-    final bool enableInput = widget.selectedFilePath != null;
 
     return AnimatedContainer(
       // Use AnimatedContainer to animate height changes
@@ -189,10 +124,8 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
       child: Container(
         padding: const EdgeInsets.all(8.0),
         decoration: BoxDecoration(
-          // Use a slightly more distinct background color
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
           border: Border(
-            // Make the top border slightly darker
             top: BorderSide(color: Colors.grey.shade400, width: 1.0),
           ),
           boxShadow: [
@@ -200,14 +133,13 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
               color: Colors.black.withOpacity(0.1),
               spreadRadius: 0,
               blurRadius: 5,
-              offset: const Offset(0, -2), // changes position of shadow
+              offset: const Offset(0, -2),
             ),
           ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min, // Column takes minimum space
           children: [
-            // --- Chat History ---
             if (isExpanded) // Conditionally render chat history when expanded
               Expanded(
                 child: Container(
@@ -235,9 +167,10 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
                         // Align message based on sender
                         alignment:
                             isUserMessage
-                                ? Alignment.centerRight
+                                ? Alignment
+                                    .centerRight // User messages on the right
                                 : Alignment
-                                    .centerLeft, // User on right, App on left
+                                    .centerLeft, // App messages on the left
                         child: Container(
                           // Container for individual message bubble (optional styling)
                           padding: const EdgeInsets.symmetric(
@@ -291,24 +224,21 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
               ),
             if (isExpanded && messages.isNotEmpty)
               const Divider(), // Conditionally render divider
-            // --- Chat Input Row ---
             Row(
+              // Input row
               children: [
                 Expanded(
                   child: TextField(
                     controller: _chatController,
-                    enabled: enableInput,
                     decoration: InputDecoration(
                       hintText:
-                          enableInput
-                              ? 'chat with your medical documents' // Changed hint text
-                              : 'Select a file to chat',
+                          'chat about the analysis report', // Hint text for analysis chat
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(20.0),
                         borderSide: BorderSide.none,
                       ),
                       filled: true,
-                      fillColor: Colors.white, // Changed background to white
+                      fillColor: Colors.white,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16.0,
                         vertical: 10.0,
@@ -317,7 +247,7 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
                     ),
                     style: const TextStyle(fontSize: 14),
                     onSubmitted:
-                        enableInput && !isLoading
+                        !isLoading
                             ? (_) => _sendMessage(ref)
                             : null, // Pass ref to sendMessage
                   ),
@@ -334,9 +264,9 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
                           )
                           : const Icon(Icons.send),
                   onPressed:
-                      enableInput && !_isLoading
+                      !_isLoading
                           ? () => _sendMessage(ref)
-                          : null, // Use local state and pass ref
+                          : null, // Pass ref to sendMessage
                   tooltip: 'Send message',
                   color: Theme.of(context).colorScheme.primary,
                   disabledColor: Colors.grey,
@@ -347,9 +277,7 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
                     isExpanded ? Icons.expand_less : Icons.expand_more,
                   ),
                   onPressed:
-                      enableInput
-                          ? () => _toggleExpanded(ref)
-                          : null, // Disable toggle if no file selected and pass ref
+                      () => _toggleExpanded(ref), // Pass ref to toggleExpanded
                   tooltip: isExpanded ? 'Collapse chat' : 'Expand chat',
                 ),
               ],

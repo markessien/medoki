@@ -163,8 +163,9 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
           // Prevent triggering extraction if already loading (extra safety)
           if (ref
               .read(fileExtractionProvider(widget.selectedFilePath))
-              .isLoading)
+              .isLoading) {
             return;
+          }
 
           if (widget.selectedFilePath != null) {
             ref
@@ -279,7 +280,7 @@ class _SummarySidebarState extends ConsumerState<SummarySidebar> {
   // --- Helper Function for Lab Results Table ---
   Widget _buildLabResultsTable(BuildContext context, dynamic labResultsData) {
     if (labResultsData == null ||
-        !(labResultsData is List) ||
+        labResultsData is! List ||
         labResultsData.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(8.0),

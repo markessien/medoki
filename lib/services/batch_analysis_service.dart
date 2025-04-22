@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Ref
 
 import 'ai_service.dart';
 import 'settings_service.dart';
-import '../providers/settings_provider.dart'; // For SettingsState access if needed directly
+// For SettingsState access if needed directly
 
 // TODO: Consider using Riverpod for service provision if appropriate for the project.
 
