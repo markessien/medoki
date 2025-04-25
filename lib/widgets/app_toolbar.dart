@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:convert'; // For JSON decoding
 import 'package:path/path.dart' as p;
 import 'package:flutter/foundation.dart'; // For kDebugMode
+import '../l10n/app_localizations.dart';
 
 import '../providers/selected_file_provider.dart';
 import '../providers/settings_provider.dart';
@@ -29,14 +30,17 @@ import '../services/html_report_generator.dart'; // Import the new HTML generato
 class AppToolbar extends ConsumerStatefulWidget implements PreferredSizeWidget {
   final int currentIndex;
   final int analysisTabIndex;
-  final VoidCallback
-  onAddRecord; // Kept for now, though FileService handles picking
+  final VoidCallback onAddRecord;
+  final String title;
+  final String slogan;
 
   const AppToolbar({
     super.key,
     required this.currentIndex,
     required this.analysisTabIndex,
     required this.onAddRecord,
+    required this.title,
+    required this.slogan,
   });
 
   @override
@@ -82,23 +86,84 @@ class _AppToolbarState extends ConsumerState<AppToolbar> {
   @override
   Widget build(BuildContext context) {
     final selectedFileState = ref.watch(selectedFileProvider);
+    final locale = ref.watch(languageProvider);
 
     return Container(
       height: kToolbarHeight,
       color: Theme.of(context).colorScheme.surface,
-      child:
-          widget.currentIndex == widget.analysisTabIndex
-              ? _AnalysisToolbarContent(
-                isTrendAnalysisRunning: _isTrendAnalysisRunning,
-                onStartTrendAnalysis: _startTrendAnalysis,
-              )
-              : _MedicalRecordsToolbarContent(
-                selectedFileState: selectedFileState,
-                searchController: _searchController,
-                searchFocusNode: _searchFocusNode,
-                onAddRecord:
-                    widget.onAddRecord, // Pass down if needed by Add button
-              ),
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppLocalizations.of(context).get('appTitle'),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                  ),
+                ),
+                Text(
+                  AppLocalizations.of(context).get('slogan'),
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child:
+                widget.currentIndex == widget.analysisTabIndex
+                    ? _AnalysisToolbarContent(
+                      isTrendAnalysisRunning: _isTrendAnalysisRunning,
+                      onStartTrendAnalysis: _startTrendAnalysis,
+                    )
+                    : _MedicalRecordsToolbarContent(
+                      selectedFileState: selectedFileState,
+                      searchController: _searchController,
+                      searchFocusNode: _searchFocusNode,
+                      onAddRecord: widget.onAddRecord,
+                    ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: DropdownButton<Locale>(
+              value: locale,
+              icon: const Icon(Icons.language),
+              underline: const SizedBox(),
+              onChanged: (Locale? newLocale) {
+                if (newLocale != null) {
+                  ref.read(languageProvider.notifier).state = newLocale;
+                }
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: Locale('de'),
+                  child: Row(
+                    children: [
+                      Text('🇩🇪', style: TextStyle(fontSize: 18)),
+                      SizedBox(width: 8),
+                      Text('Deutsch'),
+                    ],
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: Locale('en'),
+                  child: Row(
+                    children: [
+                      Text('🇬🇧', style: TextStyle(fontSize: 18)),
+                      SizedBox(width: 8),
+                      Text('English'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

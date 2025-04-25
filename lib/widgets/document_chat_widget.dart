@@ -23,6 +23,7 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _scrollController =
       ScrollController(); // To scroll chat
+  final FocusNode _chatFocusNode = FocusNode();
   List<String> _messages = []; // Local state for messages
   bool _isLoading = false; // Local state for loading
   // Removed _isExpanded and _hasInitialMessage local state
@@ -117,6 +118,7 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
       }
     });
     _chatController.clear();
+    _chatFocusNode.requestFocus();
 
     // --- Get context from the SELECTED .medoki.json file ---
     // Modified to get context ONLY from the selected file's medoki data
@@ -144,16 +146,34 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
     }
     // ---------------------------------------------
 
-    // Simulate AI response (replace with actual API call)
-    // TODO: Replace this simulation with a real call to your AI service,
-    // passing `message` and `selectedMedokiContent` as input.
-    await Future.delayed(const Duration(seconds: 2)); // Simulate network delay
-    final aiResponse =
-        'AI: Responding to "$message" (Context: ${selectedMedokiContent.length} chars from ${p.basename(widget.selectedFilePath!)})'; // Example response
+    // Build chat history for AI provider (excluding system/intro messages)
+    final chatHistory =
+        _messages
+            .where((msg) => msg.startsWith('You: ') || msg.startsWith('AI: '))
+            .map((msg) {
+              if (msg.startsWith('You: ')) {
+                return {'role': 'user', 'content': msg.substring(5)};
+              } else if (msg.startsWith('AI: ')) {
+                return {'role': 'assistant', 'content': msg.substring(4)};
+              }
+              return null;
+            })
+            .whereType<Map<String, String>>()
+            .toList();
+
+    // Add the latest user message
+    chatHistory.add({'role': 'user', 'content': message});
+
+    // Call the AI service with the chat history and medoki content as context
+    final aiService = ref.read(aiServiceProvider);
+    final aiReply = await aiService.sendAnalysisChatMessage(
+      chatHistory: chatHistory,
+      healthAnalysisDocument: selectedMedokiContent,
+    );
 
     // Update local state with AI response
     setState(() {
-      _messages = [..._messages, aiResponse];
+      _messages = [..._messages, 'AI: $aiReply'];
       _isLoading = false;
     });
 
@@ -298,6 +318,7 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
                 Expanded(
                   child: TextField(
                     controller: _chatController,
+                    focusNode: _chatFocusNode,
                     enabled: enableInput,
                     decoration: InputDecoration(
                       hintText:

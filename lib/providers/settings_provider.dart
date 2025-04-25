@@ -1,5 +1,8 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/settings_service.dart'; // Import the service and enum
+
+final languageProvider = StateProvider<Locale>((ref) => const Locale('de'));
 
 // 1. State Model for Settings
 class SettingsState {

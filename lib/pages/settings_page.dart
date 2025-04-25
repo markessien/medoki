@@ -19,11 +19,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   late TextEditingController _openAiApiKeyController;
   final double _labelWidth = 150.0; // Define a width for the labels
 
+  // Controllers for Account section
+  late TextEditingController _emailController;
+  late TextEditingController _passwordController;
+
   @override
   void initState() {
     super.initState();
     _geminiApiKeyController = TextEditingController();
     _openAiApiKeyController = TextEditingController();
+    _emailController = TextEditingController();
+    _passwordController = TextEditingController();
     // Initialize controllers text after the first frame when provider state is available
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final settings = ref.read(settingsProvider);
@@ -36,6 +42,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   void dispose() {
     _geminiApiKeyController.dispose(); // Dispose the controllers
     _openAiApiKeyController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
@@ -195,6 +203,166 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ),
                 child: ListView(
                   children: [
+                    // --- Account Section ---
+                    _buildSectionTitle("Account"),
+                    _buildSettingRow(
+                      label: "Email",
+                      control: TextField(
+                        controller: _emailController,
+                        decoration: const InputDecoration(
+                          hintText: "Enter your email",
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        keyboardType: TextInputType.emailAddress,
+                      ),
+                    ),
+                    _buildSettingRow(
+                      label: "Password",
+                      control: TextField(
+                        controller: _passwordController,
+                        decoration: const InputDecoration(
+                          hintText: "Enter your password",
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        obscureText: true,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 150.0, bottom: 8.0),
+                      child: Row(
+                        children: [
+                          ElevatedButton(
+                            onPressed: () async {
+                              final email = _emailController.text.trim();
+                              final password = _passwordController.text;
+                              // TODO: Replace with real login logic
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Login attempted for $email'),
+                                ),
+                              );
+                            },
+                            child: const Text("Login"),
+                          ),
+                          const SizedBox(width: 16),
+                          OutlinedButton(
+                            onPressed: () {
+                              showDialog(
+                                context: context,
+                                builder: (context) {
+                                  final TextEditingController
+                                  _newEmailController = TextEditingController();
+                                  final TextEditingController
+                                  _newPasswordController =
+                                      TextEditingController();
+                                  final TextEditingController
+                                  _confirmPasswordController =
+                                      TextEditingController();
+                                  return AlertDialog(
+                                    title: const Text("Create Account"),
+                                    content: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        TextField(
+                                          controller: _newEmailController,
+                                          decoration: const InputDecoration(
+                                            labelText: "Email",
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          keyboardType:
+                                              TextInputType.emailAddress,
+                                        ),
+                                        const SizedBox(height: 12),
+                                        TextField(
+                                          controller: _newPasswordController,
+                                          decoration: const InputDecoration(
+                                            labelText: "Password",
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          obscureText: true,
+                                        ),
+                                        const SizedBox(height: 12),
+                                        TextField(
+                                          controller:
+                                              _confirmPasswordController,
+                                          decoration: const InputDecoration(
+                                            labelText: "Confirm Password",
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          obscureText: true,
+                                        ),
+                                      ],
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () {
+                                          Navigator.of(context).pop();
+                                        },
+                                        child: const Text("Cancel"),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () {
+                                          final email =
+                                              _newEmailController.text.trim();
+                                          final password =
+                                              _newPasswordController.text;
+                                          final confirmPassword =
+                                              _confirmPasswordController.text;
+                                          if (email.isEmpty ||
+                                              password.isEmpty ||
+                                              confirmPassword.isEmpty) {
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Please fill in all fields.',
+                                                ),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          if (password != confirmPassword) {
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Passwords do not match.',
+                                                ),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          // TODO: Replace with real account creation logic
+                                          Navigator.of(context).pop();
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Account created for $email',
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        child: const Text("Create"),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                            },
+                            child: const Text("Create Account"),
+                          ),
+                        ],
+                      ),
+                    ),
                     // --- Storage Section ---
                     _buildSectionTitle("Storage"),
                     _buildSettingRow(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'l10n/app_localizations.dart';
 // import 'models/year.dart'; // Removed
 import 'pages/settings_page.dart'; // Import SettingsPage
 // Import SettingsService
@@ -19,6 +20,7 @@ import 'dart:io'; // Import dart:io for File and Directory
 import 'package:file_picker/file_picker.dart'; // Import file_picker
 import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
 import 'package:path/path.dart' as p; // Import path package
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 void main() {
   // No longer needs async or yearService
@@ -34,23 +36,28 @@ void main() {
   );
 }
 
-class MyApp extends StatelessWidget {
-  // final YearService yearService; // Removed
-
-  const MyApp({super.key}); // Removed yearService parameter
+class MyApp extends ConsumerWidget {
+  const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final locale = ref.watch(languageProvider);
     return MaterialApp(
-      title: 'Medoki', // Changed App Title
+      title: 'Medoki',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.lightBlue),
       ),
-      home: const MyHomePage(
-        // Can be const now
-        title:
-            'Medoki - Privately Analyse Your Medical Documents with AI', // Changed AppBar Title
-        // yearService removed
+      locale: locale,
+      supportedLocales: const [Locale('de'), Locale('en')],
+      localizationsDelegates: [
+        const AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      home: MyHomePage(
+        title: AppLocalizations(locale).get('appTitle'),
+        slogan: AppLocalizations(locale).get('slogan'),
       ),
     );
   }
@@ -59,9 +66,10 @@ class MyApp extends StatelessWidget {
 // Change to ConsumerStatefulWidget
 class MyHomePage extends ConsumerStatefulWidget {
   final String title;
+  final String slogan;
   // final YearService yearService; // Removed
 
-  const MyHomePage({super.key, required this.title}); // Removed yearService
+  const MyHomePage({super.key, required this.title, required this.slogan});
 
   @override
   // Change to ConsumerState
@@ -308,10 +316,10 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
                 // Always display the AppToolbar (it handles its own content based on index)
                 AppToolbar(
                   currentIndex: _currentIndex,
-                  analysisTabIndex:
-                      _analysisTabIndex, // Keep for logic inside toolbar if needed
-                  onAddRecord: _addFiles, // Use the new add files method
-                  // Pass other callbacks if needed
+                  analysisTabIndex: _analysisTabIndex,
+                  onAddRecord: _addFiles,
+                  title: widget.title,
+                  slogan: widget.slogan,
                 ),
               ],
             ),

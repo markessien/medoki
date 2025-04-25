@@ -18,6 +18,7 @@ class AnalysisChatWidget extends ConsumerStatefulWidget {
 class _AnalysisChatWidgetState extends ConsumerState<AnalysisChatWidget> {
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _chatFocusNode = FocusNode();
   // Removed _messages local state
   bool _isLoading = false; // Local state for loading
   // Removed _isExpanded and _hasInitialMessage local state
@@ -97,6 +98,7 @@ class _AnalysisChatWidgetState extends ConsumerState<AnalysisChatWidget> {
       }
     });
     _chatController.clear();
+    _chatFocusNode.requestFocus();
 
     // Read the Health Analysis Document as context
     String? analysisHtmlPath = ref.read(analysisHtmlPathProvider);
@@ -119,8 +121,27 @@ class _AnalysisChatWidgetState extends ConsumerState<AnalysisChatWidget> {
 
     // Call the AI service with the message and context
     final aiService = ref.read(aiServiceProvider);
+    // Build chat history for AI provider (excluding system/intro messages)
+    final messagesList = ref.read(analysisChatMessagesProvider);
+    final chatHistory =
+        messagesList
+            .where((msg) => msg.startsWith('You: ') || msg.startsWith('AI: '))
+            .map((msg) {
+              if (msg.startsWith('You: ')) {
+                return {'role': 'user', 'content': msg.substring(5)};
+              } else if (msg.startsWith('AI: ')) {
+                return {'role': 'assistant', 'content': msg.substring(4)};
+              }
+              return null;
+            })
+            .whereType<Map<String, String>>()
+            .toList();
+
+    // Add the latest user message
+    chatHistory.add({'role': 'user', 'content': message});
+
     final aiReply = await aiService.sendAnalysisChatMessage(
-      userMessage: message,
+      chatHistory: chatHistory,
       healthAnalysisDocument: healthAnalysisDocument,
     );
 
@@ -267,6 +288,7 @@ class _AnalysisChatWidgetState extends ConsumerState<AnalysisChatWidget> {
                 Expanded(
                   child: TextField(
                     controller: _chatController,
+                    focusNode: _chatFocusNode,
                     decoration: InputDecoration(
                       hintText:
                           'chat about the analysis report', // Hint text for analysis chat

@@ -591,10 +591,11 @@ $transcriptionMarkdown
     }
   }
 
-  /// Sends a chat message in the analysis context, including the Health Analysis Document as context.
+  /// Sends a chat message in the analysis context, including the Health Analysis Document as context and full chat history.
   /// Returns the AI's reply as a string.
+  /// [chatHistory] is a list of maps: [{'role': 'user'|'assistant', 'content': '...'}]
   Future<String> sendAnalysisChatMessage({
-    required String userMessage,
+    required List<Map<String, String>> chatHistory,
     required String healthAnalysisDocument,
   }) async {
     final selectedModel = await _settingsService.getSelectedAiModel();
@@ -611,15 +612,18 @@ $transcriptionMarkdown
             model: 'gemini-2.0-flash',
             apiKey: apiKey,
           );
-          final content = [
-            google_ai.Content.multi([
-              google_ai.TextPart(
-                "You are a medical assistant. The following is the Health Analysis Document for context:\n\n$healthAnalysisDocument\n\nNow answer the user's question based on this document.",
-              ),
-              google_ai.TextPart(userMessage),
-            ]),
-          ];
-          final response = await geminiModel.generateContent(content);
+          // Gemini does not support role-based chat, so concatenate the chat history into a single prompt.
+          final chatHistoryText = chatHistory
+              .map((msg) {
+                final role = msg['role'] == 'assistant' ? 'AI' : 'User';
+                return '$role: ${msg['content']}';
+              })
+              .join('\n');
+          final prompt =
+              "You are a medical assistant. The following is the Health Analysis Document for context:\n\n$healthAnalysisDocument\n\nHere is the conversation so far:\n$chatHistoryText\n\nContinue the conversation as the AI assistant.";
+          final response = await geminiModel.generateContent([
+            google_ai.Content.text(prompt),
+          ]);
           return response.text?.trim() ?? "No response from Gemini AI.";
         case AiModelType.openai:
           apiKey = await _settingsService.getOpenAiApiKey();
@@ -639,14 +643,7 @@ $transcriptionMarkdown
                   ),
                 ],
               ),
-              OpenAIChatCompletionChoiceMessageModel(
-                role: OpenAIChatMessageRole.user,
-                content: [
-                  OpenAIChatCompletionChoiceMessageContentItemModel.text(
-                    userMessage,
-                  ),
-                ],
-              ),
+              // The rest of the chat history is already included above; no need for userMessage.
             ],
           );
           return chatCompletion.choices.first.message.content?.first.text
