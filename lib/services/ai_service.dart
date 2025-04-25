@@ -590,6 +590,76 @@ $transcriptionMarkdown
       _ref.refresh(medicalRecordsProvider);
     }
   }
+
+  /// Sends a chat message in the analysis context, including the Health Analysis Document as context.
+  /// Returns the AI's reply as a string.
+  Future<String> sendAnalysisChatMessage({
+    required String userMessage,
+    required String healthAnalysisDocument,
+  }) async {
+    final selectedModel = await _settingsService.getSelectedAiModel();
+    String? apiKey;
+
+    try {
+      switch (selectedModel) {
+        case AiModelType.gemini:
+          apiKey = await _settingsService.getGeminiApiKey();
+          if (apiKey == null || apiKey.isEmpty) {
+            return "Error: Gemini API Key not configured in settings.";
+          }
+          final geminiModel = google_ai.GenerativeModel(
+            model: 'gemini-2.0-flash',
+            apiKey: apiKey,
+          );
+          final content = [
+            google_ai.Content.multi([
+              google_ai.TextPart(
+                "You are a medical assistant. The following is the Health Analysis Document for context:\n\n$healthAnalysisDocument\n\nNow answer the user's question based on this document.",
+              ),
+              google_ai.TextPart(userMessage),
+            ]),
+          ];
+          final response = await geminiModel.generateContent(content);
+          return response.text?.trim() ?? "No response from Gemini AI.";
+        case AiModelType.openai:
+          apiKey = await _settingsService.getOpenAiApiKey();
+          if (apiKey == null || apiKey.isEmpty) {
+            return "Error: OpenAI API Key not configured in settings.";
+          }
+          OpenAI.apiKey = apiKey;
+          OpenAI.requestsTimeOut = const Duration(seconds: 120);
+          final chatCompletion = await OpenAI.instance.chat.create(
+            model: "gpt-4o",
+            messages: [
+              OpenAIChatCompletionChoiceMessageModel(
+                role: OpenAIChatMessageRole.system,
+                content: [
+                  OpenAIChatCompletionChoiceMessageContentItemModel.text(
+                    "You are a medical assistant. The following is the Health Analysis Document for context:\n\n$healthAnalysisDocument",
+                  ),
+                ],
+              ),
+              OpenAIChatCompletionChoiceMessageModel(
+                role: OpenAIChatMessageRole.user,
+                content: [
+                  OpenAIChatCompletionChoiceMessageContentItemModel.text(
+                    userMessage,
+                  ),
+                ],
+              ),
+            ],
+          );
+          return chatCompletion.choices.first.message.content?.first.text
+                  ?.trim() ??
+              "No response from OpenAI.";
+        case AiModelType.medoki:
+          // Placeholder for Medoki AI
+          return "Medoki AI is not implemented for chat.";
+      }
+    } catch (e) {
+      return "Error during AI chat: $e";
+    }
+  }
 }
 
 /// Provider for AIService

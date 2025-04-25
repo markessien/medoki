@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mediciapp/widgets/medical_records_page.dart'; // Import to access medicalRecordsProvider
 import 'package:path/path.dart' as p; // Import path package
 import '../providers/chat_providers.dart'; // Import the new chat providers
+import '../services/ai_service.dart';
 
 // Removed global providers, state will be managed locally
 
@@ -267,7 +268,7 @@ class _DocumentChatWidgetState extends ConsumerState<DocumentChatWidget> {
                                 ),
                               Flexible(
                                 // Flexible to allow text wrapping
-                                child: Text(
+                                child: SelectableText(
                                   messageText,
                                   style: const TextStyle(fontSize: 14),
                                 ),

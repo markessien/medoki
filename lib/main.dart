@@ -255,11 +255,11 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                SizedBox(height: 4),
-                                Text(
-                                  'medical insights',
-                                  style: TextStyle(fontSize: 10),
-                                ),
+                                // SizedBox(height: 4),
+                                // Text(
+                                //   'medical insights',
+                                //   style: TextStyle(fontSize: 10),
+                                // ),
                               ],
                             ),
                           ),
@@ -274,11 +274,11 @@ class _MyHomePageState extends ConsumerState<MyHomePage>
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                SizedBox(height: 4),
-                                Text(
-                                  'browse records',
-                                  style: TextStyle(fontSize: 10),
-                                ),
+                                // SizedBox(height: 4),
+                                // Text(
+                                //   'browse records',
+                                //   style: TextStyle(fontSize: 10),
+                                // ),
                               ],
                             ),
                           ),

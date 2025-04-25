@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/chat_providers.dart'; // Import the new chat providers
+import '../providers/analysis_providers.dart';
+import '../services/ai_service.dart';
 
 // This widget will handle the chat functionality specifically for the Analysis tab.
 // It will not be tied to a specific document like DocumentChatWidget.
@@ -57,10 +60,26 @@ class _AnalysisChatWidgetState extends ConsumerState<AnalysisChatWidget> {
     }
   }
 
-  // Placeholder for sending a message in the analysis context
+  // Session management variables
+  DateTime? _sessionStartTime;
+
+  // Enhanced sendMessage for analysis context with Health Analysis Document
   Future<void> _sendMessage(WidgetRef ref) async {
     final message = _chatController.text.trim();
     if (message.isEmpty) return;
+
+    // Session management: expire session after 1 hour
+    final now = DateTime.now();
+    if (_sessionStartTime == null ||
+        now.difference(_sessionStartTime!).inMinutes >= 60) {
+      // Expire session: clear chat history and reset session start time
+      ref.read(analysisChatMessagesProvider.notifier).clearMessages();
+      ref.read(analysisChatInitialMessageProvider.notifier).state = false;
+      _sessionStartTime = now;
+    }
+
+    // If session just started, set the start time
+    _sessionStartTime ??= now;
 
     // Add user message to the provider
     ref.read(analysisChatMessagesProvider.notifier).addMessage('You: $message');
@@ -79,16 +98,34 @@ class _AnalysisChatWidgetState extends ConsumerState<AnalysisChatWidget> {
     });
     _chatController.clear();
 
-    // TODO: Implement actual AI interaction for analysis chat
-    // This will involve calling an AI service with the user's message
-    // and potentially relevant analysis context (e.g., summary data).
-    await Future.delayed(const Duration(seconds: 2)); // Simulate AI processing
+    // Read the Health Analysis Document as context
+    String? analysisHtmlPath = ref.read(analysisHtmlPathProvider);
+    String healthAnalysisDocument = '';
+    if (analysisHtmlPath != null && analysisHtmlPath.isNotEmpty) {
+      try {
+        final file = File(analysisHtmlPath);
+        if (await file.exists()) {
+          healthAnalysisDocument = await file.readAsString();
+        } else {
+          healthAnalysisDocument =
+              '[Health Analysis Document not found at $analysisHtmlPath]';
+        }
+      } catch (e) {
+        healthAnalysisDocument = '[Error reading Health Analysis Document: $e]';
+      }
+    } else {
+      healthAnalysisDocument = '[No Health Analysis Document path available]';
+    }
 
-    final aiResponse =
-        'AI: This is a simulated response for analysis chat based on "$message".';
+    // Call the AI service with the message and context
+    final aiService = ref.read(aiServiceProvider);
+    final aiReply = await aiService.sendAnalysisChatMessage(
+      userMessage: message,
+      healthAnalysisDocument: healthAnalysisDocument,
+    );
 
     // Add AI response to the provider
-    ref.read(analysisChatMessagesProvider.notifier).addMessage(aiResponse);
+    ref.read(analysisChatMessagesProvider.notifier).addMessage('AI: $aiReply');
 
     setState(() {
       _isLoading = false;
@@ -200,7 +237,7 @@ class _AnalysisChatWidgetState extends ConsumerState<AnalysisChatWidget> {
                                 ),
                               Flexible(
                                 // Flexible to allow text wrapping
-                                child: Text(
+                                child: SelectableText(
                                   messageText,
                                   style: const TextStyle(fontSize: 14),
                                 ),
